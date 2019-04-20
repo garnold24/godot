@@ -22,6 +22,12 @@
 		<member name="map_width" type="int" setter="set_map_width" getter="get_map_width">
 			Width of the height map data. Changing this will resize the [member map_data].
 		</member>
+		<member name="min_height" type="float" setter="set_min_height" getter="get_min_height">
+			Bottom point of the heightmap shape [member map_data].
+		</member>
+		<member name="max_height" type="float" setter="set_max_height" getter="set_max_height">
+			Top point of the heightmap shape [member map_data].
+		</member>
 	</members>
 	<constants>
 	</constants>

@@ -40,23 +40,25 @@ Vector<Vector3> HeightMapShape::_gen_debug_mesh_lines() {
 	Vector2 size(map_width - 1, map_depth - 1);
 	Vector2 start = size * -0.5;
 	int offset = 0;
-
+	
+	float yHeightOffset = (min_height-max_height)/2.0; // mesh isn't centered at the right spot
+	
 	PoolRealArray::Read r = map_data.read();
 
 	for (int d = 0; d < map_depth; d++) {
 		Vector3 height(start.x, 0.0, start.y);
 
 		for (int w = 0; w < map_width; w++) {
-			height.y = r[offset++];
+			height.y = r[offset++] + yHeightOffset;
 
 			if (w != map_width - 1) {
 				points.push_back(height);
-				points.push_back(Vector3(height.x + 1.0, r[offset], height.z));
+				points.push_back(Vector3(height.x + 1.0, r[offset] + yHeightOffset, height.z));
 			}
 
 			if (d != map_depth - 1) {
 				points.push_back(height);
-				points.push_back(Vector3(height.x, r[offset + map_width - 1], height.z + 1.0));
+				points.push_back(Vector3(height.x, r[offset + map_width - 1] + yHeightOffset, height.z + 1.0));
 			}
 
 			height.x += 1.0;
@@ -131,6 +133,35 @@ int HeightMapShape::get_map_depth() const {
 	return map_depth;
 }
 
+
+void HeightMapShape::set_min_height(float p_new) {
+	if (p_new <= max_height){
+		min_height = p_new;
+		
+		_update_shape();
+		notify_change_to_owners();
+		_change_notify("min_height");
+	}
+}
+
+float HeightMapShape::get_min_height() const {
+	return min_height;
+}
+
+void HeightMapShape::set_max_height(float p_new) {
+	if (p_new >= min_height){
+		max_height = p_new;
+		
+		_update_shape();
+		notify_change_to_owners();
+		_change_notify("max_height");
+	}
+}
+
+float HeightMapShape::get_max_height() const {
+	return max_height;
+}
+
 void HeightMapShape::set_map_data(PoolRealArray p_new) {
 	int size = (map_width * map_depth);
 	if (p_new.size() != size) {
@@ -145,8 +176,8 @@ void HeightMapShape::set_map_data(PoolRealArray p_new) {
 		float val = r[i];
 		w[i] = val;
 		if (i == 0) {
-			min_height = val;
-			max_height = val;
+			min_height = (min_height ? min_height : val);
+			max_height = (max_height ? max_height : val);
 		} else {
 			if (min_height > val)
 				min_height = val;
@@ -170,11 +201,21 @@ void HeightMapShape::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_map_width"), &HeightMapShape::get_map_width);
 	ClassDB::bind_method(D_METHOD("set_map_depth", "height"), &HeightMapShape::set_map_depth);
 	ClassDB::bind_method(D_METHOD("get_map_depth"), &HeightMapShape::get_map_depth);
+
+	ClassDB::bind_method(D_METHOD("set_min_height", "min_height"), &HeightMapShape::set_min_height);
+	ClassDB::bind_method(D_METHOD("get_min_height"), &HeightMapShape::get_min_height);
+	ClassDB::bind_method(D_METHOD("set_max_height", "max_height"), &HeightMapShape::set_max_height);
+	ClassDB::bind_method(D_METHOD("get_max_height"), &HeightMapShape::get_max_height);
+	
 	ClassDB::bind_method(D_METHOD("set_map_data", "data"), &HeightMapShape::set_map_data);
 	ClassDB::bind_method(D_METHOD("get_map_data"), &HeightMapShape::get_map_data);
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "map_width", PROPERTY_HINT_RANGE, "1,4096,1"), "set_map_width", "get_map_width");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "map_depth", PROPERTY_HINT_RANGE, "1,4096,1"), "set_map_depth", "get_map_depth");
+	
+	ADD_PROPERTY(PropertyInfo(Variant::REAL, "min_height", PROPERTY_HINT_RANGE, "1,4096,1"), "set_min_height", "get_min_height");
+	ADD_PROPERTY(PropertyInfo(Variant::REAL, "max_height", PROPERTY_HINT_RANGE, "1,4096,1"), "set_max_height", "get_max_height");
+	
 	ADD_PROPERTY(PropertyInfo(Variant::POOL_REAL_ARRAY, "map_data"), "set_map_data", "get_map_data");
 }
 
