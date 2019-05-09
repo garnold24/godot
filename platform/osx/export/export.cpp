@@ -441,7 +441,6 @@ Error EditorExportPlatformOSX::export_project(const Ref<EditorExportPreset> &p_p
 		return ERR_FILE_NOT_FOUND;
 	}
 
-	ERR_FAIL_COND_V(!src_pkg_zip, ERR_CANT_OPEN);
 	int ret = unzGoToFirstFile(src_pkg_zip);
 
 	String binary_to_use = "godot_osx_" + String(p_debug ? "debug" : "release") + ".64";
@@ -568,7 +567,7 @@ Error EditorExportPlatformOSX::export_project(const Ref<EditorExportPreset> &p_p
 					f->close();
 					if (is_execute) {
 						// Chmod with 0755 if the file is executable
-						f->_chmod(file, 0755);
+						FileAccess::set_unix_permissions(file, 0755);
 					}
 					memdelete(f);
 				} else {
