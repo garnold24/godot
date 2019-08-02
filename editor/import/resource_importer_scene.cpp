@@ -435,6 +435,7 @@ Node *ResourceImporterScene::_fix_node(Node *p_node, Node *p_root, Map<Ref<Mesh>
 			Object::cast_to<Spatial>(sb)->set_transform(Object::cast_to<Spatial>(p_node)->get_transform());
 			p_node->replace_by(sb);
 			memdelete(p_node);
+			p_node = NULL;
 			CollisionShape *colshape = memnew(CollisionShape);
 			if (empty_draw_type == "CUBE") {
 				BoxShape *boxShape = memnew(BoxShape);
@@ -893,7 +894,6 @@ void ResourceImporterScene::_filter_tracks(Node *scene, const String &p_text) {
 				keep.insert(F->get());
 			}
 			_filter_anim_tracks(anim->get_animation(name), keep);
-		} else {
 		}
 	}
 }
@@ -1024,7 +1024,7 @@ void ResourceImporterScene::_make_external_resources(Node *p_node, const String 
 					} else {
 
 						ResourceSaver::save(ext_name, mat, ResourceSaver::FLAG_CHANGE_PATH);
-						p_materials[mat] = ResourceLoader::load(ext_name);
+						p_materials[mat] = ResourceLoader::load(ext_name, "", true); // disable loading from the cache.
 					}
 				}
 
@@ -1070,13 +1070,13 @@ void ResourceImporterScene::_make_external_resources(Node *p_node, const String 
 
 									String ext_name = p_base_path.plus_file(_make_extname(mat->get_name()) + ".material");
 									;
-									if (FileAccess::exists(ext_name)) {
+									if (p_keep_materials && FileAccess::exists(ext_name)) {
 										//if exists, use it
 										p_materials[mat] = ResourceLoader::load(ext_name);
 									} else {
 
 										ResourceSaver::save(ext_name, mat, ResourceSaver::FLAG_CHANGE_PATH);
-										p_materials[mat] = ResourceLoader::load(ext_name);
+										p_materials[mat] = ResourceLoader::load(ext_name, "", true); // disable loading from the cache.
 									}
 								}
 
@@ -1135,7 +1135,7 @@ void ResourceImporterScene::get_import_options(List<ImportOption> *r_options, in
 	r_options->push_back(ImportOption(PropertyInfo(Variant::INT, "nodes/storage", PROPERTY_HINT_ENUM, "Single Scene,Instanced Sub-Scenes"), scenes_out ? 1 : 0));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::INT, "materials/location", PROPERTY_HINT_ENUM, "Node,Mesh"), (meshes_out || materials_out) ? 1 : 0));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::INT, "materials/storage", PROPERTY_HINT_ENUM, "Built-In,Files", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_UPDATE_ALL_IF_MODIFIED), materials_out ? 1 : 0));
-	r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "materials/keep_on_reimport"), materials_out ? true : false));
+	r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "materials/keep_on_reimport"), materials_out));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "meshes/compress"), true));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "meshes/ensure_tangents"), true));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::INT, "meshes/storage", PROPERTY_HINT_ENUM, "Built-In,Files"), meshes_out ? 1 : 0));
@@ -1145,8 +1145,8 @@ void ResourceImporterScene::get_import_options(List<ImportOption> *r_options, in
 	r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "animation/import", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_UPDATE_ALL_IF_MODIFIED), true));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::REAL, "animation/fps", PROPERTY_HINT_RANGE, "1,120,1"), 15));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::STRING, "animation/filter_script", PROPERTY_HINT_MULTILINE_TEXT), ""));
-	r_options->push_back(ImportOption(PropertyInfo(Variant::INT, "animation/storage", PROPERTY_HINT_ENUM, "Built-In,Files", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_UPDATE_ALL_IF_MODIFIED), animations_out ? true : false));
-	r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "animation/keep_custom_tracks"), animations_out ? true : false));
+	r_options->push_back(ImportOption(PropertyInfo(Variant::INT, "animation/storage", PROPERTY_HINT_ENUM, "Built-In,Files", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_UPDATE_ALL_IF_MODIFIED), animations_out));
+	r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "animation/keep_custom_tracks"), animations_out));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::BOOL, "animation/optimizer/enabled", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_UPDATE_ALL_IF_MODIFIED), true));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::REAL, "animation/optimizer/max_linear_error"), 0.05));
 	r_options->push_back(ImportOption(PropertyInfo(Variant::REAL, "animation/optimizer/max_angular_error"), 0.01));
@@ -1237,7 +1237,7 @@ Ref<Animation> ResourceImporterScene::import_animation_from_other_importer(Edito
 
 Error ResourceImporterScene::import(const String &p_source_file, const String &p_save_path, const Map<StringName, Variant> &p_options, List<String> *r_platform_variants, List<String> *r_gen_files, Variant *r_metadata) {
 
-	String src_path = p_source_file;
+	const String &src_path = p_source_file;
 
 	Ref<EditorSceneImporter> importer;
 	String ext = src_path.get_extension().to_lower();
@@ -1291,6 +1291,13 @@ Error ResourceImporterScene::import(const String &p_source_file, const String &p
 	}
 
 	String root_type = p_options["nodes/root_type"];
+	root_type = root_type.split(" ")[0]; // full root_type is "ClassName (filename.gd)" for a script global class.
+
+	Ref<Script> root_script = NULL;
+	if (ScriptServer::is_global_class(root_type)) {
+		root_script = ResourceLoader::load(ScriptServer::get_global_class_path(root_type));
+		root_type = ScriptServer::get_global_class_base(root_type);
+	}
 
 	if (root_type != "Spatial") {
 		Node *base_node = Object::cast_to<Node>(ClassDB::instance(root_type));
@@ -1301,6 +1308,10 @@ Error ResourceImporterScene::import(const String &p_source_file, const String &p
 			memdelete(scene);
 			scene = base_node;
 		}
+	}
+
+	if (root_script.is_valid()) {
+		scene->set_script(Variant(root_script));
 	}
 
 	if (Object::cast_to<Spatial>(scene)) {

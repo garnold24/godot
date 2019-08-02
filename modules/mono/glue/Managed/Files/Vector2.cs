@@ -186,6 +186,14 @@ namespace Godot
             return res;
         }
 
+        public Vector2 MoveToward(Vector2 to, real_t delta)
+        {
+            var v = this;
+            var vd = to - v;
+            var len = vd.Length();
+            return len <= delta || len < Mathf.Epsilon ? to : v + vd / len * delta;
+        }
+
         public Vector2 Normalized()
         {
             var v = this;
@@ -214,11 +222,13 @@ namespace Godot
             return new Vector2(Mathf.Round(x), Mathf.Round(y));
         }
 
+        [Obsolete("Set is deprecated. Use the Vector2(" + nameof(real_t) + ", " + nameof(real_t) + ") constructor instead.", error: true)]
         public void Set(real_t x, real_t y)
         {
             this.x = x;
             this.y = y;
         }
+        [Obsolete("Set is deprecated. Use the Vector2(" + nameof(Vector2) + ") constructor instead.", error: true)]
         public void Set(Vector2 v)
         {
             x = v.x;

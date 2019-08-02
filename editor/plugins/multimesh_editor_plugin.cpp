@@ -144,7 +144,7 @@ void MultiMeshEditor::_populate() {
 		}
 	}
 
-	w = PoolVector<Face3>::Write();
+	w.release();
 
 	PoolVector<Face3> faces = geometry;
 	ERR_EXPLAIN(TTR("Parent has no solid faces to populate."));
@@ -197,7 +197,7 @@ void MultiMeshEditor::_populate() {
 		float areapos = Math::random(0.0f, area_accum);
 
 		Map<float, int>::Element *E = triangle_area_map.find_closest(areapos);
-		ERR_FAIL_COND(!E)
+		ERR_FAIL_COND(!E);
 		int index = E->get();
 		ERR_FAIL_INDEX(index, facecount);
 

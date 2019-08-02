@@ -66,6 +66,7 @@ class ScriptEditorDebugger : public Control {
 	enum ItemMenu {
 		ITEM_MENU_COPY_ERROR,
 		ITEM_MENU_SAVE_REMOTE_NODE,
+		ITEM_MENU_COPY_NODE_PATH,
 	};
 
 	AcceptDialog *msgdialog;
@@ -172,6 +173,7 @@ class ScriptEditorDebugger : public Control {
 	void _set_reason_text(const String &p_reason, MessageType p_type);
 	void _scene_tree_property_select_object(ObjectID p_object);
 	void _scene_tree_property_value_edited(const String &p_prop, const Variant &p_value);
+	int _update_scene_tree(TreeItem *parent, const Array &nodes, int current_index);
 
 	void _video_mem_request();
 

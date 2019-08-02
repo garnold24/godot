@@ -65,13 +65,16 @@ private:
 		bool pressing_inside;
 
 		bool disabled;
-		int pressing_button;
 
 	} status;
 
 	Ref<ButtonGroup> button_group;
 
 	void _unpress_group();
+	void _pressed();
+	void _toggled(bool p_pressed);
+
+	void on_action_event(Ref<InputEvent> p_event);
 
 protected:
 	virtual void pressed();
@@ -137,7 +140,7 @@ VARIANT_ENUM_CAST(BaseButton::ActionMode)
 
 class ButtonGroup : public Resource {
 
-	GDCLASS(ButtonGroup, Resource)
+	GDCLASS(ButtonGroup, Resource);
 	friend class BaseButton;
 	Set<BaseButton *> buttons;
 

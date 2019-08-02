@@ -208,7 +208,7 @@ static const LauncherIcon launcher_icons[] = {
 
 class EditorExportPlatformAndroid : public EditorExportPlatform {
 
-	GDCLASS(EditorExportPlatformAndroid, EditorExportPlatform)
+	GDCLASS(EditorExportPlatformAndroid, EditorExportPlatform);
 
 	Ref<ImageTexture> logo;
 	Ref<ImageTexture> run_icon;
@@ -553,9 +553,6 @@ class EditorExportPlatformAndroid : public EditorExportPlatform {
 
 	static Vector<String> get_abis() {
 		Vector<String> abis;
-		// We can still build armv6 in theory, but it doesn't make much
-		// sense for games, so disabling for now.
-		//abis.push_back("armeabi");
 		abis.push_back("armeabi-v7a");
 		abis.push_back("arm64-v8a");
 		abis.push_back("x86");
@@ -597,7 +594,7 @@ class EditorExportPlatformAndroid : public EditorExportPlatform {
 			if (abi_index != -1) {
 				exported = true;
 				String abi = abis[abi_index];
-				String dst_path = "lib/" + abi + "/" + p_so.path.get_file();
+				String dst_path = String("lib").plus_file(abi).plus_file(p_so.path.get_file());
 				Vector<uint8_t> array = FileAccess::get_file_as_array(p_so.path);
 				Error store_err = store_in_apk(ed, dst_path, array);
 				ERR_FAIL_COND_V(store_err, store_err);
@@ -617,7 +614,9 @@ class EditorExportPlatformAndroid : public EditorExportPlatform {
 		String dst_path = p_path.replace_first("res://", "assets/");
 
 		store_in_apk(ed, dst_path, p_data, _should_compress_asset(p_path, p_data) ? Z_DEFLATED : 0);
-		ed->ep->step("File: " + p_path, 3 + p_file * 100 / p_total);
+		if (ed->ep->step("File: " + p_path, 3 + p_file * 100 / p_total)) {
+			return ERR_SKIP;
+		}
 		return OK;
 	}
 
@@ -665,6 +664,8 @@ class EditorExportPlatformAndroid : public EditorExportPlatform {
 		bool screen_support_normal = p_preset->get("screen/support_normal");
 		bool screen_support_large = p_preset->get("screen/support_large");
 		bool screen_support_xlarge = p_preset->get("screen/support_xlarge");
+
+		int xr_mode_index = p_preset->get("graphics/xr_mode");
 
 		Vector<String> perms;
 
@@ -788,7 +789,7 @@ class EditorExportPlatformAndroid : public EditorExportPlatform {
 
 						if (tname == "manifest" && attrname == "versionName") {
 							if (attr_value == 0xFFFFFFFF) {
-								WARN_PRINT("Version name in a resource, should be plaintext")
+								WARN_PRINT("Version name in a resource, should be plain text");
 							} else
 								string_table.write[attr_value] = version_name;
 						}
@@ -821,6 +822,20 @@ class EditorExportPlatformAndroid : public EditorExportPlatform {
 						if (tname == "uses-feature" && attrname == "glEsVersion") {
 
 							encode_uint32(min_gles3 ? 0x00030000 : 0x00020000, &p_manifest.write[iofs + 16]);
+						}
+
+						if (tname == "meta-data" && attrname == "name" && string_table[attr_value] == "xr_mode_metadata_name") {
+							// Update the meta-data 'android:name' attribute based on the selected XR mode.
+							if (xr_mode_index == 1 /* XRMode.OVR */) {
+								string_table.write[attr_value] = "com.samsung.android.vr.application.mode";
+							}
+						}
+
+						if (tname == "meta-data" && attrname == "value" && string_table[attr_value] == "xr_mode_metadata_value") {
+							// Update the meta-data 'android:value' attribute based on the selected XR mode.
+							if (xr_mode_index == 1 /* XRMode.OVR */) {
+								string_table.write[attr_value] = "vr_only";
+							}
 						}
 
 						iofs += 20;
@@ -1140,6 +1155,7 @@ public:
 
 	virtual void get_export_options(List<ExportOption> *r_options) {
 
+		r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "graphics/xr_mode", PROPERTY_HINT_ENUM, "Regular,Oculus Mobile VR"), 0));
 		r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "graphics/32_bits_framebuffer"), true));
 		r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "one_click_deploy/clear_previous_install"), true));
 		r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "custom_package/debug", PROPERTY_HINT_GLOBAL_FILE, "*.apk"), ""));
@@ -1255,7 +1271,9 @@ public:
 		}
 
 		//export_temp
-		ep.step("Exporting APK", 0);
+		if (ep.step("Exporting APK", 0)) {
+			return ERR_SKIP;
+		}
 
 		const bool use_remote = (p_debug_flags & DEBUG_FLAG_REMOTE_DEBUG) || (p_debug_flags & DEBUG_FLAG_DUMB_CLIENT);
 		const bool use_reverse = devices[p_device].api_level >= 21;
@@ -1278,7 +1296,9 @@ public:
 		String package_name = p_preset->get("package/unique_name");
 
 		if (remove_prev) {
-			ep.step("Uninstalling...", 1);
+			if (ep.step("Uninstalling...", 1)) {
+				return ERR_SKIP;
+			}
 
 			print_line("Uninstalling previous version: " + devices[p_device].name);
 
@@ -1291,7 +1311,9 @@ public:
 		}
 
 		print_line("Installing to device (please wait...): " + devices[p_device].name);
-		ep.step("Installing to device (please wait...)", 2);
+		if (ep.step("Installing to device (please wait...)", 2)) {
+			return ERR_SKIP;
+		}
 
 		args.clear();
 		args.push_back("-s");
@@ -1357,7 +1379,9 @@ public:
 			}
 		}
 
-		ep.step("Running on Device...", 3);
+		if (ep.step("Running on Device...", 3)) {
+			return ERR_SKIP;
+		}
 		args.clear();
 		args.push_back("-s");
 		args.push_back(devices[p_device].id);
@@ -1763,7 +1787,7 @@ public:
 
 		String src_apk;
 
-		EditorProgress ep("export", "Exporting for Android", 105);
+		EditorProgress ep("export", "Exporting for Android", 105, true);
 
 		if (bool(p_preset->get("custom_package/use_custom_build"))) { //custom build
 			//re-generate build.gradle and AndroidManifest.xml
@@ -1855,7 +1879,9 @@ public:
 		FileAccess *src_f = NULL;
 		zlib_filefunc_def io = zipio_create_io_from_file(&src_f);
 
-		ep.step("Creating APK", 0);
+		if (ep.step("Creating APK", 0)) {
+			return ERR_SKIP;
+		}
 
 		unzFile pkg = unzOpen2(src_apk.utf8().get_data(), &io);
 		if (!pkg) {
@@ -1997,7 +2023,9 @@ public:
 			ret = unzGoToNextFile(pkg);
 		}
 
-		ep.step("Adding Files...", 1);
+		if (ep.step("Adding Files...", 1)) {
+			return ERR_SKIP;
+		}
 		Error err = OK;
 		Vector<String> cl = cmdline.strip_edges().split(" ");
 		for (int i = 0; i < cl.size(); i++) {
@@ -2058,6 +2086,14 @@ public:
 					store_in_apk(&ed, launcher_icons[i].export_path, data);
 				}
 			}
+		}
+
+		int xr_mode_index = p_preset->get("graphics/xr_mode");
+		if (xr_mode_index == 1 /* XRMode.OVR */) {
+			cl.push_back("--xr_mode_ovr");
+		} else {
+			// XRMode.REGULAR is the default.
+			cl.push_back("--xr_mode_regular");
 		}
 
 		if (use_32_fb)
@@ -2135,14 +2171,18 @@ public:
 					user = EditorSettings::get_singleton()->get("export/android/debug_keystore_user");
 				}
 
-				ep.step("Signing debug APK...", 103);
+				if (ep.step("Signing debug APK...", 103)) {
+					return ERR_SKIP;
+				}
 
 			} else {
 				keystore = release_keystore;
 				password = release_password;
 				user = release_username;
 
-				ep.step("Signing release APK...", 103);
+				if (ep.step("Signing release APK...", 103)) {
+					return ERR_SKIP;
+				}
 			}
 
 			if (!FileAccess::exists(keystore)) {
@@ -2174,7 +2214,9 @@ public:
 				return ERR_CANT_CREATE;
 			}
 
-			ep.step("Verifying APK...", 104);
+			if (ep.step("Verifying APK...", 104)) {
+				return ERR_SKIP;
+			}
 
 			args.clear();
 			args.push_back("-verify");
@@ -2194,7 +2236,9 @@ public:
 
 		static const int ZIP_ALIGNMENT = 4;
 
-		ep.step("Aligning APK...", 105);
+		if (ep.step("Aligning APK...", 105)) {
+			return ERR_SKIP;
+		}
 
 		unzFile tmp_unaligned = unzOpen2(unaligned_path.utf8().get_data(), &io);
 		if (!tmp_unaligned) {

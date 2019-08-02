@@ -37,6 +37,7 @@
 #include "drivers/coreaudio/audio_driver_coreaudio.h"
 #include "drivers/unix/os_unix.h"
 
+#include "camera_ios.h"
 #include "game_center.h"
 #include "icloud.h"
 #include "in_app_store.h"
@@ -59,6 +60,8 @@ private:
 	VisualServer *visual_server;
 
 	AudioDriverCoreAudio audio_driver;
+
+	CameraServer *camera_server;
 
 #ifdef GAME_CENTER_ENABLED
 	GameCenter *game_center;
@@ -174,7 +177,7 @@ public:
 
 	void set_data_dir(String p_dir);
 
-	virtual String get_name();
+	virtual String get_name() const;
 
 	Error shell_open(String p_uri);
 

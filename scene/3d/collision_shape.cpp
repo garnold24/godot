@@ -65,7 +65,6 @@ void CollisionShape::make_convex_from_brothers() {
 }
 
 void CollisionShape::_update_in_shape_owner(bool p_xform_only) {
-
 	parent->shape_owner_set_transform(owner_id, get_transform());
 	if (p_xform_only)
 		return;
@@ -121,7 +120,7 @@ String CollisionShape::get_configuration_warning() const {
 	}
 
 	if (!shape.is_valid()) {
-		return TTR("A shape must be provided for CollisionShape to function. Please create a shape resource for it!");
+		return TTR("A shape must be provided for CollisionShape to function. Please create a shape resource for it.");
 	}
 
 	if (shape->is_class("PlaneShape")) {
@@ -228,6 +227,11 @@ void CollisionShape::_update_debug_shape() {
 }
 
 void CollisionShape::_shape_changed() {
+	// If this is a heightfield shape our center may have changed
+	if (parent) {
+		_update_in_shape_owner(true);
+	}
+
 	if (is_inside_tree() && get_tree()->is_debugging_collisions_hint() && !debug_shape_dirty) {
 		debug_shape_dirty = true;
 		call_deferred("_update_debug_shape");

@@ -474,7 +474,6 @@ void Object::set(const StringName &p_name, const Variant &p_value, bool *r_valid
 
 	if (r_valid)
 		*r_valid = false;
-	return;
 }
 
 Variant Object::get(const StringName &p_name, bool *r_valid) const {
@@ -608,18 +607,16 @@ Variant Object::get_indexed(const Vector<StringName> &p_names, bool *r_valid) co
 	}
 	bool valid = false;
 
-	Variant current_value = get(p_names[0]);
+	Variant current_value = get(p_names[0], &valid);
 	for (int i = 1; i < p_names.size(); i++) {
 		current_value = current_value.get_named(p_names[i], &valid);
 
-		if (!valid) {
-			if (r_valid)
-				*r_valid = false;
-			return Variant();
-		}
+		if (!valid)
+			break;
 	}
 	if (r_valid)
-		*r_valid = true;
+		*r_valid = valid;
+
 	return current_value;
 }
 
@@ -745,13 +742,11 @@ void Object::call_multilevel(const StringName &p_method, const Variant **p_args,
 		if (Object::cast_to<Reference>(this)) {
 			ERR_EXPLAIN("Can't 'free' a reference.");
 			ERR_FAIL();
-			return;
 		}
 
 		if (_lock_index.get() > 1) {
 			ERR_EXPLAIN("Object is locked and can't be freed.");
 			ERR_FAIL();
-			return;
 		}
 #endif
 
@@ -812,11 +807,7 @@ bool Object::has_method(const StringName &p_method) const {
 
 	MethodBind *method = ClassDB::get_method(get_class_name(), p_method);
 
-	if (method) {
-		return true;
-	}
-
-	return false;
+	return method != NULL;
 }
 
 Variant Object::getvar(const Variant &p_key, bool *r_valid) const {
@@ -954,6 +945,16 @@ void Object::notification(int p_notification, bool p_reversed) {
 	if (script_instance) {
 		script_instance->notification(p_notification);
 	}
+}
+
+String Object::to_string() {
+	if (script_instance) {
+		bool valid;
+		String ret = script_instance->to_string(&valid);
+		if (valid)
+			return ret;
+	}
+	return "[" + get_class() + ":" + itos(get_instance_id()) + "]";
 }
 
 void Object::_changed_callback(Object *p_changed, const char *p_prop) {
@@ -1464,7 +1465,7 @@ Error Object::connect(const StringName &p_signal, Object *p_to_object, const Str
 
 		if (!signal_is_valid) {
 			ERR_EXPLAIN("In Object of type '" + String(get_class()) + "': Attempt to connect nonexistent signal '" + p_signal + "' to method '" + p_to_object->get_class() + "." + p_to_method + "'");
-			ERR_FAIL_COND_V(!signal_is_valid, ERR_INVALID_PARAMETER);
+			ERR_FAIL_V(ERR_INVALID_PARAMETER);
 		}
 		signal_map[p_signal] = Signal();
 		s = &signal_map[p_signal];
@@ -1477,7 +1478,7 @@ Error Object::connect(const StringName &p_signal, Object *p_to_object, const Str
 			return OK;
 		} else {
 			ERR_EXPLAIN("Signal '" + p_signal + "' is already connected to given method '" + p_to_method + "' in that object.");
-			ERR_FAIL_COND_V(s->slot_map.has(target), ERR_INVALID_PARAMETER);
+			ERR_FAIL_V(ERR_INVALID_PARAMETER);
 		}
 	}
 
@@ -1514,7 +1515,7 @@ bool Object::is_connected(const StringName &p_signal, Object *p_to_object, const
 			return false;
 
 		ERR_EXPLAIN("Nonexistent signal: " + p_signal);
-		ERR_FAIL_COND_V(!s, false);
+		ERR_FAIL_V(false);
 	}
 
 	Signal::Target target(p_to_object->get_instance_id(), p_to_method);
@@ -1534,11 +1535,11 @@ void Object::_disconnect(const StringName &p_signal, Object *p_to_object, const 
 	Signal *s = signal_map.getptr(p_signal);
 	if (!s) {
 		ERR_EXPLAIN("Nonexistent signal: " + p_signal);
-		ERR_FAIL_COND(!s);
+		ERR_FAIL();
 	}
 	if (s->lock > 0) {
 		ERR_EXPLAIN("Attempt to disconnect signal '" + p_signal + "' while emitting (locks: " + itos(s->lock) + ")");
-		ERR_FAIL_COND(s->lock > 0);
+		ERR_FAIL();
 	}
 
 	Signal::Target target(p_to_object->get_instance_id(), p_to_method);
@@ -1681,7 +1682,7 @@ void Object::clear_internal_resource_paths() {
 void Object::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_class"), &Object::get_class);
-	ClassDB::bind_method(D_METHOD("is_class", "type"), &Object::is_class);
+	ClassDB::bind_method(D_METHOD("is_class", "class"), &Object::is_class);
 	ClassDB::bind_method(D_METHOD("set", "property", "value"), &Object::_set_bind);
 	ClassDB::bind_method(D_METHOD("get", "property"), &Object::_get_bind);
 	ClassDB::bind_method(D_METHOD("set_indexed", "property", "value"), &Object::_set_indexed_bind);
@@ -1689,6 +1690,7 @@ void Object::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_property_list"), &Object::_get_property_list_bind);
 	ClassDB::bind_method(D_METHOD("get_method_list"), &Object::_get_method_list_bind);
 	ClassDB::bind_method(D_METHOD("notification", "what", "reversed"), &Object::notification, DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("to_string"), &Object::to_string);
 	ClassDB::bind_method(D_METHOD("get_instance_id"), &Object::get_instance_id);
 
 	ClassDB::bind_method(D_METHOD("set_script", "script"), &Object::set_script);
@@ -1700,14 +1702,8 @@ void Object::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_meta", "name"), &Object::has_meta);
 	ClassDB::bind_method(D_METHOD("get_meta_list"), &Object::_get_meta_list_bind);
 
-	//todo reimplement this per language so all 5 arguments can be called
-
-	//ClassDB::bind_method(D_METHOD("call","method","arg1","arg2","arg3","arg4"),&Object::_call_bind,DEFVAL(Variant()),DEFVAL(Variant()),DEFVAL(Variant()),DEFVAL(Variant()));
-	//ClassDB::bind_method(D_METHOD("call_deferred","method","arg1","arg2","arg3","arg4"),&Object::_call_deferred_bind,DEFVAL(Variant()),DEFVAL(Variant()),DEFVAL(Variant()),DEFVAL(Variant()));
-
 	ClassDB::bind_method(D_METHOD("add_user_signal", "signal", "arguments"), &Object::_add_user_signal, DEFVAL(Array()));
 	ClassDB::bind_method(D_METHOD("has_user_signal", "signal"), &Object::_has_user_signal);
-	//ClassDB::bind_method(D_METHOD("emit_signal","signal","arguments"),&Object::_emit_signal,DEFVAL(Array()));
 
 	{
 		MethodInfo mi;
@@ -1776,6 +1772,7 @@ void Object::_bind_methods() {
 
 #endif
 	BIND_VMETHOD(MethodInfo("_init"));
+	BIND_VMETHOD(MethodInfo(Variant::STRING, "_to_string"));
 
 	BIND_CONSTANT(NOTIFICATION_POSTINITIALIZE);
 	BIND_CONSTANT(NOTIFICATION_PREDELETE);

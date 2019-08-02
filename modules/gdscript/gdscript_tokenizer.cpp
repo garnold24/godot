@@ -376,6 +376,11 @@ static bool _is_hex(CharType c) {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
+static bool _is_bin(CharType c) {
+
+	return (c == '0' || c == '1');
+}
+
 void GDScriptTokenizerText::_make_token(Token p_type) {
 
 	TokenData &tk = tk_rb[tk_rb_pos];
@@ -512,7 +517,22 @@ void GDScriptTokenizerText::_advance() {
 				INCPOS(1);
 				column = 1;
 				int i = 0;
-				while (GETCHAR(i) == ' ' || GETCHAR(i) == '\t') {
+				while (true) {
+					if (GETCHAR(i) == ' ') {
+						if (file_indent_type == INDENT_NONE) file_indent_type = INDENT_SPACES;
+						if (file_indent_type != INDENT_SPACES) {
+							_make_error("Spaces used for indentation in tab-indented file!");
+							return;
+						}
+					} else if (GETCHAR(i) == '\t') {
+						if (file_indent_type == INDENT_NONE) file_indent_type = INDENT_TABS;
+						if (file_indent_type != INDENT_TABS) {
+							_make_error("Tabs used for indentation in space-indented file!");
+							return;
+						}
+					} else {
+						break; // not indentation anymore
+					}
 					i++;
 				}
 
@@ -550,9 +570,25 @@ void GDScriptTokenizerText::_advance() {
 				column = 1;
 				line++;
 				int i = 0;
-				while (GETCHAR(i) == ' ' || GETCHAR(i) == '\t') {
+				while (true) {
+					if (GETCHAR(i) == ' ') {
+						if (file_indent_type == INDENT_NONE) file_indent_type = INDENT_SPACES;
+						if (file_indent_type != INDENT_SPACES) {
+							_make_error("Spaces used for indentation in tab-indented file!");
+							return;
+						}
+					} else if (GETCHAR(i) == '\t') {
+						if (file_indent_type == INDENT_NONE) file_indent_type = INDENT_TABS;
+						if (file_indent_type != INDENT_TABS) {
+							_make_error("Tabs used for indentation in space-indented file!");
+							return;
+						}
+					} else {
+						break; // not indentation anymore
+					}
 					i++;
 				}
+
 				_make_newline(i);
 				return;
 
@@ -877,6 +913,7 @@ void GDScriptTokenizerText::_advance() {
 					bool period_found = false;
 					bool exponent_found = false;
 					bool hexa_found = false;
+					bool bin_found = false;
 					bool sign_found = false;
 
 					String str;
@@ -887,16 +924,28 @@ void GDScriptTokenizerText::_advance() {
 							if (period_found || exponent_found) {
 								_make_error("Invalid numeric constant at '.'");
 								return;
+							} else if (bin_found) {
+								_make_error("Invalid binary constant at '.'");
+								return;
+							} else if (hexa_found) {
+								_make_error("Invalid hexadecimal constant at '.'");
+								return;
 							}
 							period_found = true;
 						} else if (GETCHAR(i) == 'x') {
-							if (hexa_found || str.length() != 1 || !((i == 1 && str[0] == '0') || (i == 2 && str[1] == '0' && str[0] == '-'))) {
+							if (hexa_found || bin_found || str.length() != 1 || !((i == 1 && str[0] == '0') || (i == 2 && str[1] == '0' && str[0] == '-'))) {
 								_make_error("Invalid numeric constant at 'x'");
 								return;
 							}
 							hexa_found = true;
+						} else if (GETCHAR(i) == 'b') {
+							if (hexa_found || bin_found || str.length() != 1 || !((i == 1 && str[0] == '0') || (i == 2 && str[1] == '0' && str[0] == '-'))) {
+								_make_error("Invalid numeric constant at 'b'");
+								return;
+							}
+							bin_found = true;
 						} else if (!hexa_found && GETCHAR(i) == 'e') {
-							if (exponent_found) {
+							if (exponent_found || bin_found) {
 								_make_error("Invalid numeric constant at 'e'");
 								return;
 							}
@@ -904,6 +953,8 @@ void GDScriptTokenizerText::_advance() {
 						} else if (_is_number(GETCHAR(i))) {
 							//all ok
 						} else if (hexa_found && _is_hex(GETCHAR(i))) {
+
+						} else if (bin_found && _is_bin(GETCHAR(i))) {
 
 						} else if ((GETCHAR(i) == '-' || GETCHAR(i) == '+') && exponent_found) {
 							if (sign_found) {
@@ -929,6 +980,9 @@ void GDScriptTokenizerText::_advance() {
 					INCPOS(i);
 					if (hexa_found) {
 						int64_t val = str.hex_to_int64();
+						_make_constant(val);
+					} else if (bin_found) {
+						int64_t val = str.bin_to_int64();
 						_make_constant(val);
 					} else if (period_found || exponent_found) {
 						double val = str.to_double();
@@ -1059,6 +1113,7 @@ void GDScriptTokenizerText::set_code(const String &p_code) {
 	ignore_warnings = false;
 #endif // DEBUG_ENABLED
 	last_error = "";
+	file_indent_type = INDENT_NONE;
 	for (int i = 0; i < MAX_LOOKAHEAD + 1; i++)
 		_advance();
 }
@@ -1166,7 +1221,7 @@ Error GDScriptTokenizerBuffer::set_code_buffer(const Vector<uint8_t> &p_buffer) 
 	int version = decode_uint32(&buf[4]);
 	if (version > BYTECODE_VERSION) {
 		ERR_EXPLAIN("Bytecode is too New! Please use a newer engine version.");
-		ERR_FAIL_COND_V(version > BYTECODE_VERSION, ERR_INVALID_DATA);
+		ERR_FAIL_V(ERR_INVALID_DATA);
 	}
 	int identifier_count = decode_uint32(&buf[8]);
 	int constant_count = decode_uint32(&buf[12]);
@@ -1280,7 +1335,7 @@ Vector<uint8_t> GDScriptTokenizerBuffer::parse_code_string(const String &p_code)
 			} break;
 			case TK_CONSTANT: {
 
-				Variant c = tt.get_token_constant();
+				const Variant &c = tt.get_token_constant();
 				if (!constant_map.has(c)) {
 					int idx = constant_map.size();
 					constant_map[c] = idx;

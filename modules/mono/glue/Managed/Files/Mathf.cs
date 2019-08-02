@@ -44,9 +44,9 @@ namespace Godot
             return (real_t)Math.Atan(s);
         }
 
-        public static real_t Atan2(real_t x, real_t y)
+        public static real_t Atan2(real_t y, real_t x)
         {
-            return (real_t)Math.Atan2(x, y);
+            return (real_t)Math.Atan2(y, x);
         }
 
         public static Vector2 Cartesian2Polar(real_t x, real_t y)
@@ -185,6 +185,12 @@ namespace Godot
             return from + (to - from) * weight;
         }
 
+        public static real_t LerpAngle(real_t from, real_t to, real_t weight) {
+            real_t difference = (to - from) % Mathf.Tau;
+            real_t distance = ((2 * difference) % Mathf.Tau) - difference;
+            return from + distance * weight;
+        }
+
         public static real_t Log(real_t s)
         {
             return (real_t)Math.Log(s);
@@ -208,6 +214,11 @@ namespace Godot
         public static real_t Min(real_t a, real_t b)
         {
             return a < b ? a : b;
+        }
+
+        public static real_t MoveToward(real_t from, real_t to, real_t delta)
+        {
+            return Abs(to - from) <= delta ? to : from + Sign(to - from) * delta;
         }
 
         public static int NearestPo2(int value)

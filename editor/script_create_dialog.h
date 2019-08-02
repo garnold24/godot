@@ -33,7 +33,7 @@
 
 #include "editor/editor_file_dialog.h"
 #include "editor/editor_settings.h"
-#include "scene/gui/check_button.h"
+#include "scene/gui/check_box.h"
 #include "scene/gui/dialogs.h"
 #include "scene/gui/grid_container.h"
 #include "scene/gui/line_edit.h"
@@ -57,7 +57,7 @@ class ScriptCreateDialog : public ConfirmationDialog {
 	LineEdit *file_path;
 	Button *path_button;
 	EditorFileDialog *file_browse;
-	CheckButton *internal;
+	CheckBox *internal;
 	Label *internal_label;
 	VBoxContainer *path_vb;
 	AcceptDialog *alert;
@@ -87,7 +87,8 @@ class ScriptCreateDialog : public ConfirmationDialog {
 	void _path_entered(const String &p_path = String());
 	void _lang_changed(int l = 0);
 	void _built_in_pressed();
-	bool _validate(const String &p_string);
+	bool _validate_parent(const String &p_string);
+	bool _validate_class(const String &p_string);
 	String _validate_path(const String &p_path, bool p_file_must_exist);
 	void _class_name_changed(const String &p_name);
 	void _parent_name_changed(const String &p_parent);

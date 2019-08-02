@@ -147,9 +147,10 @@ class AudioBusLayout;
 
 class AudioServer : public Object {
 
-	GDCLASS(AudioServer, Object)
+	GDCLASS(AudioServer, Object);
+
 public:
-	//re-expose this her, as AudioDriver is not exposed to script
+	//re-expose this here, as AudioDriver is not exposed to script
 	enum SpeakerMode {
 		SPEAKER_MODE_STEREO,
 		SPEAKER_SURROUND_31,
@@ -179,6 +180,8 @@ private:
 
 	int channel_count;
 	int to_mix;
+
+	float global_rate_scale;
 
 	struct Bus {
 
@@ -338,6 +341,9 @@ public:
 
 	bool is_bus_channel_active(int p_bus, int p_channel) const;
 
+	void set_global_rate_scale(float p_scale);
+	float get_global_rate_scale() const;
+
 	virtual void init();
 	virtual void finish();
 	virtual void update();
@@ -390,7 +396,7 @@ VARIANT_ENUM_CAST(AudioServer::SpeakerMode)
 
 class AudioBusLayout : public Resource {
 
-	GDCLASS(AudioBusLayout, Resource)
+	GDCLASS(AudioBusLayout, Resource);
 
 	friend class AudioServer;
 

@@ -35,6 +35,7 @@
 #include "core/os/keyboard.h"
 #include "core/os/os.h"
 #include "core/project_settings.h"
+#include "core/script_language.h"
 #include "scene/main/viewport.h"
 
 #ifdef TOOLS_ENABLED
@@ -50,7 +51,7 @@ inline bool _is_symbol(CharType c) {
 
 static bool _is_text_char(CharType c) {
 
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+	return !is_symbol(c);
 }
 
 static bool _is_whitespace(CharType c) {
@@ -102,6 +103,13 @@ static CharType _get_right_pair_symbol(CharType c) {
 	if (c == '{')
 		return '}';
 	return 0;
+}
+
+static int _find_first_non_whitespace_column_of_line(const String &line) {
+	int left = 0;
+	while (left < line.length() && _is_whitespace(line[left]))
+		left++;
+	return left;
 }
 
 void TextEdit::Text::set_font(const Ref<Font> &p_font) {
@@ -292,6 +300,7 @@ void TextEdit::Text::insert(int p_at, const String &p_text) {
 	line.marked = false;
 	line.safe = false;
 	line.breakpoint = false;
+	line.bookmark = false;
 	line.hidden = false;
 	line.width_cache = -1;
 	line.wrap_amount_cache = -1;
@@ -346,7 +355,7 @@ void TextEdit::_update_scrollbars() {
 	if (line_numbers)
 		total_width += cache.line_number_w;
 
-	if (draw_breakpoint_gutter) {
+	if (draw_breakpoint_gutter || draw_bookmark_gutter) {
 		total_width += cache.breakpoint_gutter_width;
 	}
 
@@ -398,6 +407,7 @@ void TextEdit::_update_scrollbars() {
 		cursor.line_ofs = 0;
 		cursor.wrap_ofs = 0;
 		v_scroll->set_value(0);
+		v_scroll->set_max(0);
 		v_scroll->hide();
 	}
 
@@ -416,6 +426,7 @@ void TextEdit::_update_scrollbars() {
 
 		cursor.x_ofs = 0;
 		h_scroll->set_value(0);
+		h_scroll->set_max(0);
 		h_scroll->hide();
 	}
 
@@ -605,7 +616,7 @@ void TextEdit::_notification(int p_what) {
 				draw_caret = false;
 			}
 
-			if (draw_breakpoint_gutter) {
+			if (draw_breakpoint_gutter || draw_bookmark_gutter) {
 				breakpoint_gutter_width = (get_row_height() * 55) / 100;
 				cache.breakpoint_gutter_width = breakpoint_gutter_width;
 			} else {
@@ -652,10 +663,8 @@ void TextEdit::_notification(int p_what) {
 			int xmargin_end = size.width - cache.style_normal->get_margin(MARGIN_RIGHT);
 			//let's do it easy for now:
 			cache.style_normal->draw(ci, Rect2(Point2(), size));
-			float readonly_alpha = 1.0; // used to set the input text color when in read-only mode
 			if (readonly) {
 				cache.style_readonly->draw(ci, Rect2(Point2(), size));
-				readonly_alpha = .5;
 				draw_caret = false;
 			}
 			if (has_focus())
@@ -665,12 +674,18 @@ void TextEdit::_notification(int p_what) {
 
 			int visible_rows = get_visible_rows() + 1;
 
-			Color color = cache.font_color;
-			color.a *= readonly_alpha;
+			Color color = readonly ? cache.font_color_readonly : cache.font_color;
 
 			if (syntax_coloring) {
 				if (cache.background_color.a > 0.01) {
 					VisualServer::get_singleton()->canvas_item_add_rect(ci, Rect2(Point2i(), get_size()), cache.background_color);
+				}
+			}
+
+			if (line_length_guideline) {
+				int x = xmargin_beg + (int)cache.font->get_char_size('0').width * line_length_guideline_col - cursor.x_ofs;
+				if (x > xmargin_beg && x < xmargin_end) {
+					VisualServer::get_singleton()->canvas_item_add_line(ci, Point2(x, 0), Point2(x, size.height), cache.line_length_guideline_color);
 				}
 			}
 
@@ -861,10 +876,7 @@ void TextEdit::_notification(int p_what) {
 					color_map = _get_line_syntax_highlighting(line);
 				}
 				// ensure we at least use the font color
-				Color current_color = cache.font_color;
-				if (readonly) {
-					current_color.a *= readonly_alpha;
-				}
+				Color current_color = readonly ? cache.font_color_readonly : cache.font_color;
 
 				bool underlined = false;
 
@@ -954,6 +966,16 @@ void TextEdit::_notification(int p_what) {
 #endif
 						}
 
+						// draw bookmark marker
+						if (text.is_bookmark(line)) {
+							if (draw_bookmark_gutter) {
+								int vertical_gap = (get_row_height() * 40) / 100;
+								int horizontal_gap = (cache.breakpoint_gutter_width * 30) / 100;
+								int marker_radius = get_row_height() - (vertical_gap * 2);
+								VisualServer::get_singleton()->canvas_item_add_circle(ci, Point2(cache.style_normal->get_margin(MARGIN_LEFT) + horizontal_gap - 2 + marker_radius / 2, ofs_y + vertical_gap + marker_radius / 2), marker_radius, Color(cache.bookmark_color.r, cache.bookmark_color.g, cache.bookmark_color.b));
+							}
+						}
+
 						// draw breakpoint marker
 						if (text.is_breakpoint(line)) {
 							if (draw_breakpoint_gutter) {
@@ -1041,10 +1063,7 @@ void TextEdit::_notification(int p_what) {
 
 						if (syntax_coloring) {
 							if (color_map.has(last_wrap_column + j)) {
-								current_color = color_map[last_wrap_column + j].color;
-								if (readonly) {
-									current_color.a *= readonly_alpha;
-								}
+								current_color = readonly ? cache.font_color_readonly : color_map[last_wrap_column + j].color;
 							}
 							color = current_color;
 						}
@@ -1072,10 +1091,7 @@ void TextEdit::_notification(int p_what) {
 						}
 
 						if ((char_ofs + char_margin + char_w) >= xmargin_end) {
-							if (syntax_coloring)
-								continue;
-							else
-								break;
+							break;
 						}
 
 						bool in_search_result = false;
@@ -1098,7 +1114,7 @@ void TextEdit::_notification(int p_what) {
 						if (line == cursor.line && cursor_wrap_index == line_wrap_index && highlight_current_line) {
 							// draw the wrap indent offset highlight
 							if (line_wrap_index != 0 && j == 0) {
-								VisualServer::get_singleton()->canvas_item_add_rect(ci, Rect2(char_ofs + char_margin - indent_px, ofs_y, (char_ofs + char_margin), get_row_height()), cache.current_line_color);
+								VisualServer::get_singleton()->canvas_item_add_rect(ci, Rect2(char_ofs + char_margin - indent_px, ofs_y, indent_px, get_row_height()), cache.current_line_color);
 							}
 							// if its the last char draw to end of the line
 							if (j == str.length() - 1) {
@@ -1161,7 +1177,7 @@ void TextEdit::_notification(int p_what) {
 
 								if (brace_open_mismatch)
 									color = cache.brace_mismatch_color;
-								drawer.draw_char(ci, Point2i(char_ofs + char_margin + ofs_x, yofs + ascent), '_', str[j + 1], in_selection && override_selected_font_color ? cache.font_selected_color : color);
+								drawer.draw_char(ci, Point2i(char_ofs + char_margin + ofs_x, yofs + ascent), '_', str[j + 1], in_selection && override_selected_font_color ? cache.font_color_selected : color);
 							}
 
 							if ((brace_close_match_line == line && brace_close_match_column == last_wrap_column + j) ||
@@ -1169,7 +1185,7 @@ void TextEdit::_notification(int p_what) {
 
 								if (brace_close_mismatch)
 									color = cache.brace_mismatch_color;
-								drawer.draw_char(ci, Point2i(char_ofs + char_margin + ofs_x, yofs + ascent), '_', str[j + 1], in_selection && override_selected_font_color ? cache.font_selected_color : color);
+								drawer.draw_char(ci, Point2i(char_ofs + char_margin + ofs_x, yofs + ascent), '_', str[j + 1], in_selection && override_selected_font_color ? cache.font_color_selected : color);
 							}
 						}
 
@@ -1235,24 +1251,28 @@ void TextEdit::_notification(int p_what) {
 						if (cursor.column == last_wrap_column + j && cursor.line == line && cursor_wrap_index == line_wrap_index && block_caret && draw_caret && !insert_mode) {
 							color = cache.caret_background_color;
 						} else if (!syntax_coloring && block_caret) {
-							color = cache.font_color;
-							color.a *= readonly_alpha;
+							color = readonly ? cache.font_color_readonly : cache.font_color;
 						}
 
 						if (str[j] >= 32) {
 							int yofs = ofs_y + (get_row_height() - cache.font->get_height()) / 2;
-							int w = drawer.draw_char(ci, Point2i(char_ofs + char_margin + ofs_x, yofs + ascent), str[j], str[j + 1], in_selection && override_selected_font_color ? cache.font_selected_color : color);
+							int w = drawer.draw_char(ci, Point2i(char_ofs + char_margin + ofs_x, yofs + ascent), str[j], str[j + 1], in_selection && override_selected_font_color ? cache.font_color_selected : color);
 							if (underlined) {
 								float line_width = 1.0;
 #ifdef TOOLS_ENABLED
 								line_width *= EDSCALE;
 #endif
 
-								draw_rect(Rect2(char_ofs + char_margin + ofs_x, yofs + ascent + 2, w, line_width), in_selection && override_selected_font_color ? cache.font_selected_color : color);
+								draw_rect(Rect2(char_ofs + char_margin + ofs_x, yofs + ascent + 2, w, line_width), in_selection && override_selected_font_color ? cache.font_color_selected : color);
 							}
 						} else if (draw_tabs && str[j] == '\t') {
 							int yofs = (get_row_height() - cache.tab_icon->get_height()) / 2;
-							cache.tab_icon->draw(ci, Point2(char_ofs + char_margin + ofs_x, ofs_y + yofs), in_selection && override_selected_font_color ? cache.font_selected_color : color);
+							cache.tab_icon->draw(ci, Point2(char_ofs + char_margin + ofs_x, ofs_y + yofs), in_selection && override_selected_font_color ? cache.font_color_selected : color);
+						}
+
+						if (draw_spaces && str[j] == ' ') {
+							int yofs = (get_row_height() - cache.space_icon->get_height()) / 2;
+							cache.space_icon->draw(ci, Point2(char_ofs + char_margin + ofs_x, ofs_y + yofs), in_selection && override_selected_font_color ? cache.font_color_selected : color);
 						}
 
 						char_ofs += char_w;
@@ -1327,13 +1347,6 @@ void TextEdit::_notification(int p_what) {
 				}
 			}
 
-			if (line_length_guideline) {
-				int x = xmargin_beg + cache.font->get_char_size('0').width * line_length_guideline_col - cursor.x_ofs;
-				if (x > xmargin_beg && x < xmargin_end) {
-					VisualServer::get_singleton()->canvas_item_add_line(ci, Point2(x, 0), Point2(x, size.height), cache.line_length_guideline_color);
-				}
-			}
-
 			bool completion_below = false;
 			if (completion_active) {
 				// code completion box
@@ -1350,13 +1363,18 @@ void TextEdit::_notification(int p_what) {
 
 				if (completion_options.size() < 50) {
 					for (int i = 0; i < completion_options.size(); i++) {
-						int w2 = MIN(cache.font->get_string_size(completion_options[i]).x, cmax_width);
+						int w2 = MIN(cache.font->get_string_size(completion_options[i].display).x, cmax_width);
 						if (w2 > w)
 							w = w2;
 					}
 				} else {
 					w = cmax_width;
 				}
+
+				//  Add space for completion icons
+				const int icon_hsep = get_constant("hseparation", "ItemList");
+				Size2 icon_area_size(get_row_height(), get_row_height());
+				w += icon_area_size.width + icon_hsep;
 
 				int th = h + csb->get_minimum_size().y;
 
@@ -1385,7 +1403,7 @@ void TextEdit::_notification(int p_what) {
 				}
 				int line_from = CLAMP(completion_index - lines / 2, 0, completion_options.size() - lines);
 				VisualServer::get_singleton()->canvas_item_add_rect(ci, Rect2(Point2(completion_rect.position.x, completion_rect.position.y + (completion_index - line_from) * get_row_height()), Size2(completion_rect.size.width, get_row_height())), cache.completion_selected_color);
-				draw_rect(Rect2(completion_rect.position, Size2(nofs, completion_rect.size.height)), cache.completion_existing_color);
+				draw_rect(Rect2(completion_rect.position + Vector2(icon_area_size.x + icon_hsep, 0), Size2(nofs, completion_rect.size.height)), cache.completion_existing_color);
 
 				for (int i = 0; i < lines; i++) {
 
@@ -1393,12 +1411,26 @@ void TextEdit::_notification(int p_what) {
 					ERR_CONTINUE(l < 0 || l >= completion_options.size());
 					Color text_color = cache.completion_font_color;
 					for (int j = 0; j < color_regions.size(); j++) {
-						if (completion_options[l].begins_with(color_regions[j].begin_key)) {
+						if (completion_options[l].insert_text.begins_with(color_regions[j].begin_key)) {
 							text_color = color_regions[j].color;
 						}
 					}
 					int yofs = (get_row_height() - cache.font->get_height()) / 2;
-					draw_string(cache.font, Point2(completion_rect.position.x, completion_rect.position.y + i * get_row_height() + cache.font->get_ascent() + yofs), completion_options[l], text_color, completion_rect.size.width);
+					Point2 title_pos(completion_rect.position.x, completion_rect.position.y + i * get_row_height() + cache.font->get_ascent() + yofs);
+
+					//draw completion icon if it is valid
+					Ref<Texture> icon = completion_options[l].icon;
+					Rect2 icon_area(completion_rect.position.x, completion_rect.position.y + i * get_row_height(), icon_area_size.width, icon_area_size.height);
+					if (icon.is_valid()) {
+						const real_t max_scale = 0.7f;
+						const real_t side = max_scale * icon_area.size.width;
+						real_t scale = MIN(side / icon->get_width(), side / icon->get_height());
+						Size2 icon_size = icon->get_size() * scale;
+						draw_texture_rect(icon, Rect2(icon_area.position + (icon_area.size - icon_size) / 2, icon_size));
+					}
+
+					title_pos.x = icon_area.position.x + icon_area.size.width + icon_hsep;
+					draw_string(cache.font, title_pos, completion_options[l].display, text_color, completion_rect.size.width);
 				}
 
 				if (scrollw) {
@@ -1581,7 +1613,6 @@ void TextEdit::_consume_pair_symbol(CharType ch) {
 
 	insert_text_at_cursor(ch_pair);
 	cursor_set_column(cursor_position_to_move);
-	return;
 }
 
 void TextEdit::_consume_backspace_for_pair_symbol(int prev_line, int prev_column) {
@@ -1632,31 +1663,25 @@ void TextEdit::backspace_at_cursor() {
 		_consume_backspace_for_pair_symbol(prev_line, prev_column);
 	} else {
 		// handle space indentation
-		if (cursor.column - indent_size >= 0 && indent_using_spaces) {
-
-			// if there is enough spaces to count as a tab
+		if (cursor.column != 0 && indent_using_spaces) {
+			// check if there are no other chars before cursor, just indentation
 			bool unindent = true;
-			for (int i = 1; i <= indent_size; i++) {
-				if (text[cursor.line][cursor.column - i] != ' ') {
-					unindent = false;
-					break;
-				}
-			}
-
-			// and it is before the first character
 			int i = 0;
 			while (i < cursor.column && i < text[cursor.line].length()) {
-				if (text[cursor.line][i] != ' ' && text[cursor.line][i] != '\t') {
+				if (!_is_whitespace(text[cursor.line][i])) {
 					unindent = false;
 					break;
 				}
 				i++;
 			}
 
-			// then we can remove it as a single character.
+			// then we can remove all spaces as a single character.
 			if (unindent) {
-				_remove_text(cursor.line, cursor.column - indent_size, cursor.line, cursor.column);
-				prev_column = cursor.column - indent_size;
+				// we want to remove spaces up to closest indent
+				// or whole indent if cursor is pointing at it
+				int spaces_to_delete = _calculate_spaces_till_next_left_indent(cursor.column);
+				prev_column = cursor.column - spaces_to_delete;
+				_remove_text(cursor.line, prev_column, cursor.line, cursor.column);
 			} else {
 				_remove_text(prev_line, prev_column, cursor.line, cursor.column);
 			}
@@ -1673,6 +1698,10 @@ void TextEdit::indent_right() {
 
 	int start_line;
 	int end_line;
+
+	// this value informs us by how much we changed selection position by indenting right
+	// default is 1 for tab indentation
+	int selection_offset = 1;
 	begin_complex_operation();
 
 	if (is_selection_active()) {
@@ -1691,18 +1720,24 @@ void TextEdit::indent_right() {
 	for (int i = start_line; i <= end_line; i++) {
 		String line_text = get_line(i);
 		if (indent_using_spaces) {
-			line_text = space_indent + line_text;
+			// we don't really care where selection is - we just need to know indentation level at the beginning of the line
+			int left = _find_first_non_whitespace_column_of_line(line_text);
+			int spaces_to_add = _calculate_spaces_till_next_right_indent(left);
+			// since we will add this much spaces we want move whole selection and cursor by this much
+			selection_offset = spaces_to_add;
+			for (int j = 0; j < spaces_to_add; j++)
+				line_text = ' ' + line_text;
 		} else {
 			line_text = '\t' + line_text;
 		}
 		set_line(i, line_text);
 	}
 
-	// fix selection and cursor being off by one on the last line
+	// fix selection and cursor being off after shifting selection right
 	if (is_selection_active()) {
-		select(selection.from_line, selection.from_column + 1, selection.to_line, selection.to_column + 1);
+		select(selection.from_line, selection.from_column + selection_offset, selection.to_line, selection.to_column + selection_offset);
 	}
-	cursor_set_column(cursor.column + 1, false);
+	cursor_set_column(cursor.column + selection_offset, false);
 	end_complex_operation();
 	update();
 }
@@ -1711,6 +1746,15 @@ void TextEdit::indent_left() {
 
 	int start_line;
 	int end_line;
+
+	// moving cursor and selection after unindenting can get tricky
+	// because changing content of line can move cursor and selection on it's own (if new line ends before previous position of either)
+	// therefore we just remember initial values
+	// and at the end of the operation offset them by number of removed characters
+	int removed_characters = 0;
+	int initial_selection_end_column = selection.to_column;
+	int initial_cursor_column = cursor.column;
+
 	begin_complex_operation();
 
 	if (is_selection_active()) {
@@ -1733,19 +1777,41 @@ void TextEdit::indent_left() {
 		if (line_text.begins_with("\t")) {
 			line_text = line_text.substr(1, line_text.length());
 			set_line(i, line_text);
-		} else if (line_text.begins_with(space_indent)) {
-			line_text = line_text.substr(indent_size, line_text.length());
+			removed_characters = 1;
+		} else if (line_text.begins_with(" ")) {
+			// when unindenting we aim to remove spaces before line that has selection no matter what is selected
+			// so we start of by finding first non whitespace character of line
+			int left = _find_first_non_whitespace_column_of_line(line_text);
+
+			// here we remove only enough spaces to align text to nearest full multiple of indentation_size
+			// in case where selection begins at the start of indentation_size multiple we remove whole indentation level
+			int spaces_to_remove = _calculate_spaces_till_next_left_indent(left);
+
+			line_text = line_text.substr(spaces_to_remove, line_text.length());
 			set_line(i, line_text);
+			removed_characters = spaces_to_remove;
 		}
 	}
 
 	// fix selection and cursor being off by one on the last line
 	if (is_selection_active() && last_line_text != get_line(end_line)) {
-		select(selection.from_line, selection.from_column - 1, selection.to_line, selection.to_column - 1);
+		select(selection.from_line, selection.from_column - removed_characters,
+				selection.to_line, initial_selection_end_column - removed_characters);
 	}
-	cursor_set_column(cursor.column - 1, false);
+	cursor_set_column(initial_cursor_column - removed_characters, false);
 	end_complex_operation();
 	update();
+}
+
+int TextEdit::_calculate_spaces_till_next_left_indent(int column) {
+	int spaces_till_indent = column % indent_size;
+	if (spaces_till_indent == 0)
+		spaces_till_indent = indent_size;
+	return spaces_till_indent;
+}
+
+int TextEdit::_calculate_spaces_till_next_right_indent(int column) {
+	return indent_size - column % indent_size;
 }
 
 void TextEdit::_get_mouse_pos(const Point2i &p_mouse, int &r_row, int &r_col) const {
@@ -1798,6 +1864,9 @@ void TextEdit::_get_mouse_pos(const Point2i &p_mouse, int &r_row, int &r_col) co
 }
 
 void TextEdit::_gui_input(const Ref<InputEvent> &p_gui_input) {
+
+	double prev_v_scroll = v_scroll->get_value();
+	double prev_h_scroll = h_scroll->get_value();
 
 	Ref<InputEventMouseButton> mb = p_gui_input;
 
@@ -2053,6 +2122,9 @@ void TextEdit::_gui_input(const Ref<InputEvent> &p_gui_input) {
 			_scroll_down(delta);
 		}
 		h_scroll->set_value(h_scroll->get_value() + pan_gesture->get_delta().x * 100);
+		if (v_scroll->get_value() != prev_v_scroll || h_scroll->get_value() != prev_h_scroll)
+			accept_event(); //accept event if scroll changed
+
 		return;
 	}
 
@@ -2095,6 +2167,9 @@ void TextEdit::_gui_input(const Ref<InputEvent> &p_gui_input) {
 			}
 		}
 	}
+
+	if (v_scroll->get_value() != prev_v_scroll || h_scroll->get_value() != prev_h_scroll)
+		accept_event(); //accept event if scroll changed
 
 	Ref<InputEventKey> k = p_gui_input;
 
@@ -2504,15 +2579,11 @@ void TextEdit::_gui_input(const Ref<InputEvent> &p_gui_input) {
 				} else {
 					if (k->get_shift()) {
 
-						//simple unindent
+						// simple unindent
 						int cc = cursor.column;
-
-						const int len = text[cursor.line].length();
 						const String &line = text[cursor.line];
 
-						int left = 0; // number of whitespace chars at beginning of line
-						while (left < len && (line[left] == '\t' || line[left] == ' '))
-							left++;
+						int left = _find_first_non_whitespace_column_of_line(line);
 						cc = MIN(cc, left);
 
 						while (cc < indent_size && cc < left && line[cc] == ' ')
@@ -2520,24 +2591,18 @@ void TextEdit::_gui_input(const Ref<InputEvent> &p_gui_input) {
 
 						if (cc > 0 && cc <= text[cursor.line].length()) {
 							if (text[cursor.line][cc - 1] == '\t') {
+								// tabs unindentation
 								_remove_text(cursor.line, cc - 1, cursor.line, cc);
 								if (cursor.column >= left)
 									cursor_set_column(MAX(0, cursor.column - 1));
 								update();
 							} else {
-								int n = 0;
-
-								for (int i = 1; i <= MIN(cc, indent_size); i++) {
-									if (line[cc - i] != ' ') {
-										break;
-									}
-									n++;
-								}
-
-								if (n > 0) {
-									_remove_text(cursor.line, cc - n, cursor.line, cc);
-									if (cursor.column > left - n) // inside text?
-										cursor_set_column(MAX(0, cursor.column - n));
+								// spaces unindentation
+								int spaces_to_remove = _calculate_spaces_till_next_left_indent(cc);
+								if (spaces_to_remove > 0) {
+									_remove_text(cursor.line, cc - spaces_to_remove, cursor.line, cc);
+									if (cursor.column > left - spaces_to_remove) // inside text?
+										cursor_set_column(MAX(0, cursor.column - spaces_to_remove));
 									update();
 								}
 							}
@@ -2546,9 +2611,14 @@ void TextEdit::_gui_input(const Ref<InputEvent> &p_gui_input) {
 							update();
 						}
 					} else {
-						//simple indent
+						// simple indent
 						if (indent_using_spaces) {
-							_insert_text_at_cursor(space_indent);
+							// insert only as much spaces as needed till next indentation level
+							int spaces_to_add = _calculate_spaces_till_next_right_indent(cursor.column);
+							String indent_to_insert = String();
+							for (int i = 0; i < spaces_to_add; i++)
+								indent_to_insert = ' ' + indent_to_insert;
+							_insert_text_at_cursor(indent_to_insert);
 						} else {
 							_insert_text_at_cursor("\t");
 						}
@@ -3217,28 +3287,6 @@ void TextEdit::_gui_input(const Ref<InputEvent> &p_gui_input) {
 
 			} break;
 
-			case KEY_U: {
-				if (!k->get_command() || k->get_shift()) {
-					scancode_handled = false;
-					break;
-				} else {
-					if (selection.active) {
-						int ini = selection.from_line;
-						int end = selection.to_line;
-
-						for (int i = ini; i <= end; i++) {
-							_uncomment_line(i);
-						}
-					} else {
-						_uncomment_line(cursor.line);
-						if (cursor.column >= get_line(cursor.line).length()) {
-							cursor.column = MAX(0, get_line(cursor.line).length() - 1);
-						}
-					}
-					update();
-				}
-			} break;
-
 			default: {
 
 				scancode_handled = false;
@@ -3294,24 +3342,6 @@ void TextEdit::_gui_input(const Ref<InputEvent> &p_gui_input) {
 		}
 
 		return;
-	}
-}
-
-void TextEdit::_uncomment_line(int p_line) {
-	String line_text = get_line(p_line);
-	for (int i = 0; i < line_text.length(); i++) {
-		if (line_text[i] == '#') {
-			_remove_text(p_line, i, p_line, i + 1);
-			if (p_line == selection.to_line && selection.to_column > line_text.length() - 1) {
-				selection.to_column -= 1;
-				if (selection.to_column >= selection.from_column) {
-					selection.active = false;
-				}
-			}
-			return;
-		} else if (line_text[i] != '\t' && line_text[i] != ' ') {
-			return;
-		}
 	}
 }
 
@@ -3601,7 +3631,7 @@ void TextEdit::_insert_text(int p_line, int p_char, const String &p_text, int *r
 	op.chain_forward = false;
 	op.chain_backward = false;
 
-	//see if it shold just be set as current op
+	//see if it should just be set as current op
 	if (current_op.type != op.type) {
 		op.prev_version = get_version();
 		_push_current_op();
@@ -3652,7 +3682,7 @@ void TextEdit::_remove_text(int p_from_line, int p_from_column, int p_to_line, i
 	op.chain_forward = false;
 	op.chain_backward = false;
 
-	//see if it shold just be set as current op
+	//see if it should just be set as current op
 	if (current_op.type != op.type) {
 		op.prev_version = get_version();
 		_push_current_op();
@@ -4017,7 +4047,7 @@ void TextEdit::cursor_set_line(int p_row, bool p_adjust_viewport, bool p_can_be_
 	cursor.line = p_row;
 
 	int n_col = get_char_pos_for_line(cursor.last_fit_x, p_row, p_wrap_index);
-	if (is_wrap_enabled() && p_wrap_index < times_line_wraps(p_row)) {
+	if (n_col != 0 && is_wrap_enabled() && p_wrap_index < times_line_wraps(p_row)) {
 		Vector<String> rows = get_wrap_rows_text(p_row);
 		int row_end_col = 0;
 		for (int i = 0; i < p_wrap_index + 1; i++) {
@@ -4108,7 +4138,7 @@ void TextEdit::_scroll_moved(double p_to_val) {
 		int v_scroll_i = floor(get_v_scroll());
 		int sc = 0;
 		int n_line;
-		for (n_line = 0; n_line < text.size(); n_line++) {
+		for (n_line = 0; n_line < text.size() - 1; n_line++) {
 			if (!is_line_hidden(n_line)) {
 				sc++;
 				sc += times_line_wraps(n_line);
@@ -4301,17 +4331,22 @@ Control::CursorShape TextEdit::get_cursor_shape(const Point2 &p_pos) const {
 void TextEdit::set_text(String p_text) {
 
 	setting_text = true;
-	_clear();
-	_insert_text_at_cursor(p_text);
-	clear_undo_history();
-	cursor.column = 0;
-	cursor.line = 0;
-	cursor.x_ofs = 0;
-	cursor.line_ofs = 0;
-	cursor.wrap_ofs = 0;
-	cursor.last_fit_x = 0;
-	cursor_set_line(0);
-	cursor_set_column(0);
+	if (!undo_enabled) {
+		_clear();
+		_insert_text_at_cursor(p_text);
+	}
+
+	if (undo_enabled) {
+		cursor_set_line(0);
+		cursor_set_column(0);
+
+		begin_complex_operation();
+		_remove_text(0, 0, MAX(0, get_line_count() - 1), MAX(get_line(MAX(get_line_count() - 1, 0)).size() - 1, 0));
+		_insert_text_at_cursor(p_text);
+		end_complex_operation();
+		selection.active = false;
+	}
+
 	update();
 	setting_text = false;
 
@@ -4488,7 +4523,8 @@ void TextEdit::_update_caches() {
 	cache.line_number_color = get_color("line_number_color");
 	cache.safe_line_number_color = get_color("safe_line_number_color");
 	cache.font_color = get_color("font_color");
-	cache.font_selected_color = get_color("font_selected_color");
+	cache.font_color_selected = get_color("font_color_selected");
+	cache.font_color_readonly = get_color("font_color_readonly");
 	cache.keyword_color = get_color("keyword_color");
 	cache.function_color = get_color("function_color");
 	cache.member_variable_color = get_color("member_variable_color");
@@ -4497,6 +4533,7 @@ void TextEdit::_update_caches() {
 	cache.mark_color = get_color("mark_color");
 	cache.current_line_color = get_color("current_line_color");
 	cache.line_length_guideline_color = get_color("line_length_guideline_color");
+	cache.bookmark_color = get_color("bookmark_color");
 	cache.breakpoint_color = get_color("breakpoint_color");
 	cache.executing_line_color = get_color("executing_line_color");
 	cache.code_folding_color = get_color("code_folding_color");
@@ -4513,6 +4550,7 @@ void TextEdit::_update_caches() {
 #endif
 	cache.row_height = cache.font->get_height() + cache.line_spacing;
 	cache.tab_icon = get_icon("tab");
+	cache.space_icon = get_icon("space");
 	cache.folded_icon = get_icon("folded");
 	cache.can_fold_icon = get_icon("fold");
 	cache.folded_eol_icon = get_icon("GuiEllipsis", "EditorIcons");
@@ -4614,6 +4652,8 @@ bool TextEdit::has_keyword_color(String p_keyword) const {
 }
 
 Color TextEdit::get_keyword_color(String p_keyword) const {
+
+	ERR_FAIL_COND_V(!keywords.has(p_keyword), Color());
 	return keywords[p_keyword];
 }
 
@@ -4757,14 +4797,18 @@ void TextEdit::deselect() {
 
 void TextEdit::select(int p_from_line, int p_from_column, int p_to_line, int p_to_column) {
 
-	if (p_from_line >= text.size())
+	if (p_from_line < 0)
+		p_from_line = 0;
+	else if (p_from_line >= text.size())
 		p_from_line = text.size() - 1;
 	if (p_from_column >= text[p_from_line].length())
 		p_from_column = text[p_from_line].length();
 	if (p_from_column < 0)
 		p_from_column = 0;
 
-	if (p_to_line >= text.size())
+	if (p_to_line < 0)
+		p_to_line = 0;
+	else if (p_to_line >= text.size())
 		p_to_line = text.size() - 1;
 	if (p_to_column >= text[p_to_line].length())
 		p_to_column = text[p_to_line].length();
@@ -5093,6 +5137,37 @@ void TextEdit::clear_executing_line() {
 	update();
 }
 
+bool TextEdit::is_line_set_as_bookmark(int p_line) const {
+
+	ERR_FAIL_INDEX_V(p_line, text.size(), false);
+	return text.is_bookmark(p_line);
+}
+
+void TextEdit::set_line_as_bookmark(int p_line, bool p_bookmark) {
+
+	ERR_FAIL_INDEX(p_line, text.size());
+	text.set_bookmark(p_line, p_bookmark);
+	update();
+}
+
+void TextEdit::get_bookmarks(List<int> *p_bookmarks) const {
+
+	for (int i = 0; i < text.size(); i++) {
+		if (text.is_bookmark(i))
+			p_bookmarks->push_back(i);
+	}
+}
+
+Array TextEdit::get_bookmarks_array() const {
+
+	Array arr;
+	for (int i = 0; i < text.size(); i++) {
+		if (text.is_bookmark(i))
+			arr.append(i);
+	}
+	return arr;
+}
+
 bool TextEdit::is_line_set_as_breakpoint(int p_line) const {
 
 	ERR_FAIL_INDEX_V(p_line, text.size(), false);
@@ -5303,11 +5378,7 @@ bool TextEdit::is_line_comment(int p_line) const {
 	for (int i = 0; i < line_length - 1; i++) {
 		if (_is_symbol(text[p_line][i]) && cri_map.has(i)) {
 			const Text::ColorRegionInfo &cri = cri_map[i];
-			if (color_regions[cri.region].begin_key == "#" || color_regions[cri.region].begin_key == "//") {
-				return true;
-			} else {
-				return false;
-			}
+			return color_regions[cri.region].begin_key == "#" || color_regions[cri.region].begin_key == "//";
 		} else if (_is_whitespace(text[p_line][i])) {
 			continue;
 		} else {
@@ -5356,9 +5427,7 @@ bool TextEdit::is_folded(int p_line) const {
 	ERR_FAIL_INDEX_V(p_line, text.size(), false);
 	if (p_line + 1 >= text.size())
 		return false;
-	if (!is_line_hidden(p_line) && is_line_hidden(p_line + 1))
-		return true;
-	return false;
+	return !is_line_hidden(p_line) && is_line_hidden(p_line + 1);
 }
 
 Vector<int> TextEdit::get_folded_lines() const {
@@ -5512,7 +5581,7 @@ void TextEdit::undo() {
 
 	TextOperation op = undo_stack_pos->get();
 	_do_text_op(op, true);
-	if (op.from_line != op.to_line || op.to_column != op.from_column + 1)
+	if (op.type != TextOperation::TYPE_INSERT && (op.from_line != op.to_line || op.to_column != op.from_column + 1))
 		select(op.from_line, op.from_column, op.to_line, op.to_column);
 
 	current_op.version = op.prev_version;
@@ -5647,6 +5716,16 @@ void TextEdit::set_draw_tabs(bool p_draw) {
 bool TextEdit::is_drawing_tabs() const {
 
 	return draw_tabs;
+}
+
+void TextEdit::set_draw_spaces(bool p_draw) {
+
+	draw_spaces = p_draw;
+}
+
+bool TextEdit::is_drawing_spaces() const {
+
+	return draw_spaces;
 }
 
 void TextEdit::set_override_selected_font_color(bool p_override_selected_font_color) {
@@ -5826,12 +5905,12 @@ void TextEdit::_confirm_completion() {
 
 	_remove_text(cursor.line, cursor.column - completion_base.length(), cursor.line, cursor.column);
 	cursor_set_column(cursor.column - completion_base.length(), false);
-	insert_text_at_cursor(completion_current);
+	insert_text_at_cursor(completion_current.insert_text);
 
 	// When inserted into the middle of an existing string/method, don't add an unnecessary quote/bracket.
 	String line = text[cursor.line];
 	CharType next_char = line[cursor.column];
-	CharType last_completion_char = completion_current[completion_current.length() - 1];
+	CharType last_completion_char = completion_current.insert_text[completion_current.insert_text.length() - 1];
 
 	if ((last_completion_char == '"' || last_completion_char == '\'') && last_completion_char == next_char) {
 		_base_remove_text(cursor.line, cursor.column, cursor.line, cursor.column + 1);
@@ -5967,39 +6046,41 @@ void TextEdit::_update_completion_candidates() {
 	completion_base = s;
 	Vector<float> sim_cache;
 	bool single_quote = s.begins_with("'");
-	Vector<String> completion_options_casei;
+	Vector<ScriptCodeCompletionOption> completion_options_casei;
 
-	for (int i = 0; i < completion_strings.size(); i++) {
-		if (single_quote && completion_strings[i].is_quoted()) {
-			completion_strings.write[i] = completion_strings[i].unquote().quote("'");
+	for (List<ScriptCodeCompletionOption>::Element *E = completion_sources.front(); E; E = E->next()) {
+		ScriptCodeCompletionOption &option = E->get();
+
+		if (single_quote && option.display.is_quoted()) {
+			option.display = option.display.unquote().quote("'");
 		}
 
-		if (inquote && restore_quotes == 1 && !completion_strings[i].is_quoted()) {
+		if (inquote && restore_quotes == 1 && !option.display.is_quoted()) {
 			String quote = single_quote ? "'" : "\"";
-			completion_strings.write[i] = completion_strings[i].quote(quote);
+			option.display = option.display.quote(quote);
 		}
 
-		if (completion_strings[i].begins_with(s)) {
-			completion_options.push_back(completion_strings[i]);
-		} else if (completion_strings[i].to_lower().begins_with(s.to_lower())) {
-			completion_options_casei.push_back(completion_strings[i]);
+		if (option.display.begins_with(s)) {
+			completion_options.push_back(option);
+		} else if (option.display.to_lower().begins_with(s.to_lower())) {
+			completion_options_casei.push_back(option);
 		}
 	}
 
 	completion_options.append_array(completion_options_casei);
 
 	if (completion_options.size() == 0) {
-		for (int i = 0; i < completion_strings.size(); i++) {
-			if (s.is_subsequence_of(completion_strings[i])) {
-				completion_options.push_back(completion_strings[i]);
+		for (int i = 0; i < completion_sources.size(); i++) {
+			if (s.is_subsequence_of(completion_sources[i].display)) {
+				completion_options.push_back(completion_sources[i]);
 			}
 		}
 	}
 
 	if (completion_options.size() == 0) {
-		for (int i = 0; i < completion_strings.size(); i++) {
-			if (s.is_subsequence_ofi(completion_strings[i])) {
-				completion_options.push_back(completion_strings[i]);
+		for (int i = 0; i < completion_sources.size(); i++) {
+			if (s.is_subsequence_ofi(completion_sources[i].display)) {
+				completion_options.push_back(completion_sources[i]);
 			}
 		}
 	}
@@ -6010,7 +6091,7 @@ void TextEdit::_update_completion_candidates() {
 		return;
 	}
 
-	if (completion_options.size() == 1 && s == completion_options[0]) {
+	if (completion_options.size() == 1 && s == completion_options[0].display) {
 		// A perfect match, stop completion
 		_cancel_completion();
 		return;
@@ -6048,12 +6129,12 @@ void TextEdit::set_code_hint(const String &p_hint) {
 	update();
 }
 
-void TextEdit::code_complete(const Vector<String> &p_strings, bool p_forced) {
+void TextEdit::code_complete(const List<ScriptCodeCompletionOption> &p_strings, bool p_forced) {
 
-	completion_strings = p_strings;
+	completion_sources = p_strings;
 	completion_active = true;
 	completion_forced = p_forced;
-	completion_current = "";
+	completion_current = ScriptCodeCompletionOption();
 	completion_index = 0;
 	_update_completion_candidates();
 }
@@ -6170,6 +6251,15 @@ void TextEdit::set_line_length_guideline_column(int p_column) {
 	update();
 }
 
+void TextEdit::set_bookmark_gutter_enabled(bool p_draw) {
+	draw_bookmark_gutter = p_draw;
+	update();
+}
+
+bool TextEdit::is_bookmark_gutter_enabled() const {
+	return draw_bookmark_gutter;
+}
+
 void TextEdit::set_breakpoint_gutter_enabled(bool p_draw) {
 	draw_breakpoint_gutter = p_draw;
 	update();
@@ -6224,14 +6314,14 @@ int TextEdit::get_info_gutter_width() const {
 	return info_gutter_width;
 }
 
-void TextEdit::set_hiding_enabled(int p_enabled) {
+void TextEdit::set_hiding_enabled(bool p_enabled) {
 	if (!p_enabled)
 		unhide_all_lines();
 	hiding_enabled = p_enabled;
 	update();
 }
 
-int TextEdit::is_hiding_enabled() const {
+bool TextEdit::is_hiding_enabled() const {
 	return hiding_enabled;
 }
 
@@ -6332,6 +6422,7 @@ void TextEdit::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_text"), &TextEdit::get_text);
 	ClassDB::bind_method(D_METHOD("get_line", "line"), &TextEdit::get_line);
 
+	ClassDB::bind_method(D_METHOD("center_viewport_to_cursor"), &TextEdit::center_viewport_to_cursor);
 	ClassDB::bind_method(D_METHOD("cursor_set_column", "column", "adjust_viewport"), &TextEdit::cursor_set_column, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("cursor_set_line", "line", "adjust_viewport", "can_be_hidden", "wrap_index"), &TextEdit::cursor_set_line, DEFVAL(true), DEFVAL(true), DEFVAL(0));
 
@@ -6382,6 +6473,8 @@ void TextEdit::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_show_line_numbers_enabled"), &TextEdit::is_show_line_numbers_enabled);
 	ClassDB::bind_method(D_METHOD("set_draw_tabs"), &TextEdit::set_draw_tabs);
 	ClassDB::bind_method(D_METHOD("is_drawing_tabs"), &TextEdit::is_drawing_tabs);
+	ClassDB::bind_method(D_METHOD("set_draw_spaces"), &TextEdit::set_draw_spaces);
+	ClassDB::bind_method(D_METHOD("is_drawing_spaces"), &TextEdit::is_drawing_spaces);
 	ClassDB::bind_method(D_METHOD("set_breakpoint_gutter_enabled", "enable"), &TextEdit::set_breakpoint_gutter_enabled);
 	ClassDB::bind_method(D_METHOD("is_breakpoint_gutter_enabled"), &TextEdit::is_breakpoint_gutter_enabled);
 	ClassDB::bind_method(D_METHOD("set_draw_fold_gutter"), &TextEdit::set_draw_fold_gutter);
@@ -6433,6 +6526,7 @@ void TextEdit::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "syntax_highlighting"), "set_syntax_coloring", "is_syntax_coloring_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "show_line_numbers"), "set_show_line_numbers", "is_show_line_numbers_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "draw_tabs"), "set_draw_tabs", "is_drawing_tabs");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "draw_spaces"), "set_draw_spaces", "is_drawing_spaces");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "breakpoint_gutter"), "set_breakpoint_gutter_enabled", "is_breakpoint_gutter_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fold_gutter"), "set_draw_fold_gutter", "is_drawing_fold_gutter");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "highlight_all_occurrences"), "set_highlight_all_occurrences", "is_highlight_all_occurrences_enabled");
@@ -6474,6 +6568,7 @@ TextEdit::TextEdit() {
 
 	setting_row = false;
 	draw_tabs = false;
+	draw_spaces = false;
 	override_selected_font_color = false;
 	draw_caret = true;
 	max_chars = 0;
@@ -6562,6 +6657,7 @@ TextEdit::TextEdit() {
 	line_numbers_zero_padded = false;
 	line_length_guideline = false;
 	line_length_guideline_col = 80;
+	draw_bookmark_gutter = false;
 	draw_breakpoint_gutter = false;
 	draw_fold_gutter = false;
 	draw_info_gutter = false;
@@ -6586,6 +6682,7 @@ TextEdit::TextEdit() {
 	context_menu_enabled = true;
 	menu = memnew(PopupMenu);
 	add_child(menu);
+	readonly = true; // initialise to opposite first, so we get past the early-out in set_readonly
 	set_readonly(false);
 	menu->connect("id_pressed", this, "menu_option");
 	first_draw = true;

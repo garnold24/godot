@@ -48,9 +48,9 @@ void EditorHelp::_init_colors() {
 	text_color = get_color("default_color", "RichTextLabel");
 	headline_color = get_color("headline_color", "EditorHelp");
 	base_type_color = title_color.linear_interpolate(text_color, 0.5);
-	comment_color = text_color * Color(1, 1, 1, 0.6);
+	comment_color = text_color * Color(1, 1, 1, 0.4);
 	symbol_color = comment_color;
-	value_color = text_color * Color(1, 1, 1, 0.4);
+	value_color = text_color * Color(1, 1, 1, 0.6);
 	qualifier_color = text_color * Color(1, 1, 1, 0.8);
 	type_color = get_color("accent_color", "Editor").linear_interpolate(text_color, 0.5);
 	class_desc->add_color_override("selection_color", get_color("accent_color", "Editor") * Color(1, 1, 1, 0.4));
@@ -203,8 +203,9 @@ String EditorHelp::_fix_constant(const String &p_constant) const {
 	if (p_constant.strip_edges() == "2147483647") {
 		return "0x7FFFFFFF";
 	}
+
 	if (p_constant.strip_edges() == "1048575") {
-		return "0xfffff";
+		return "0xFFFFF";
 	}
 
 	return p_constant;
@@ -257,9 +258,11 @@ void EditorHelp::_add_method(const DocData::MethodDoc &p_method, bool p_overview
 		if (p_method.arguments[j].default_value != "") {
 
 			class_desc->push_color(symbol_color);
-			class_desc->add_text("=");
+			class_desc->add_text(" = ");
 			class_desc->pop();
+			class_desc->push_color(value_color);
 			_add_text(_fix_constant(p_method.arguments[j].default_value));
+			class_desc->pop();
 		}
 
 		class_desc->pop();
@@ -324,6 +327,7 @@ void EditorHelp::_update_doc() {
 	DocData::ClassDoc cd = doc->class_list[edited_class]; //make a copy, so we can sort without worrying
 
 	Ref<Font> doc_font = get_font("doc", "EditorFonts");
+	Ref<Font> doc_bold_font = get_font("doc_bold", "EditorFonts");
 	Ref<Font> doc_title_font = get_font("doc_title", "EditorFonts");
 	Ref<Font> doc_code_font = get_font("doc_source", "EditorFonts");
 	String link_color_text = title_color.to_html(false);
@@ -387,7 +391,6 @@ void EditorHelp::_update_doc() {
 				if (prev) {
 
 					class_desc->add_text(" , ");
-					prev = false;
 				}
 
 				_add_type(E->get().name);
@@ -414,6 +417,7 @@ void EditorHelp::_update_doc() {
 		class_desc->pop();
 
 		class_desc->add_newline();
+		class_desc->add_newline();
 		class_desc->push_color(text_color);
 		class_desc->push_font(doc_font);
 		class_desc->push_indent(1);
@@ -439,6 +443,8 @@ void EditorHelp::_update_doc() {
 		class_desc->pop();
 		class_desc->pop();
 
+		class_desc->add_newline();
+		class_desc->push_font(doc_code_font);
 		class_desc->push_indent(1);
 		class_desc->push_table(2);
 		class_desc->set_table_column_expand(1, 1);
@@ -468,13 +474,15 @@ void EditorHelp::_update_doc() {
 			if (cd.properties[i].description != "") {
 				describe = true;
 			}
+
 			class_desc->push_cell();
+			class_desc->push_font(doc_code_font);
+			class_desc->push_color(headline_color);
+
 			if (describe) {
 				class_desc->push_meta("@member " + cd.properties[i].name);
 			}
 
-			class_desc->push_font(doc_code_font);
-			class_desc->push_color(headline_color);
 			_add_text(cd.properties[i].name);
 
 			if (describe) {
@@ -482,13 +490,27 @@ void EditorHelp::_update_doc() {
 				property_descr = true;
 			}
 
+			if (cd.properties[i].default_value != "") {
+				class_desc->push_color(symbol_color);
+				class_desc->add_text(" [default: ");
+				class_desc->pop();
+				class_desc->push_color(value_color);
+				_add_text(_fix_constant(cd.properties[i].default_value));
+				class_desc->pop();
+				class_desc->push_color(symbol_color);
+				class_desc->add_text("]");
+				class_desc->pop();
+			}
+
 			class_desc->pop();
 			class_desc->pop();
+
 			class_desc->pop();
 		}
 
 		class_desc->pop(); //table
 		class_desc->pop();
+		class_desc->pop(); // font
 		class_desc->add_newline();
 		class_desc->add_newline();
 	}
@@ -517,6 +539,7 @@ void EditorHelp::_update_doc() {
 		class_desc->pop();
 		class_desc->pop();
 
+		class_desc->add_newline();
 		class_desc->push_font(doc_code_font);
 		class_desc->push_indent(1);
 		class_desc->push_table(2);
@@ -538,7 +561,6 @@ void EditorHelp::_update_doc() {
 				class_desc->pop(); //cell
 				class_desc->push_cell();
 				class_desc->pop(); //cell
-				any_previous = false;
 			}
 
 			String group_prefix;
@@ -609,6 +631,19 @@ void EditorHelp::_update_doc() {
 			class_desc->push_color(headline_color);
 			_add_text(cd.theme_properties[i].name);
 			class_desc->pop();
+
+			if (cd.theme_properties[i].default_value != "") {
+				class_desc->push_color(symbol_color);
+				class_desc->add_text(" [default: ");
+				class_desc->pop();
+				class_desc->push_color(value_color);
+				_add_text(_fix_constant(cd.theme_properties[i].default_value));
+				class_desc->pop();
+				class_desc->push_color(symbol_color);
+				class_desc->add_text("]");
+				class_desc->pop();
+			}
+
 			class_desc->pop();
 
 			if (cd.theme_properties[i].description != "") {
@@ -667,7 +702,7 @@ void EditorHelp::_update_doc() {
 				if (cd.signals[i].arguments[j].default_value != "") {
 
 					class_desc->push_color(symbol_color);
-					class_desc->add_text("=");
+					class_desc->add_text(" = ");
 					class_desc->pop();
 					_add_text(cd.signals[i].arguments[j].default_value);
 				}
@@ -773,7 +808,7 @@ void EditorHelp::_update_doc() {
 					class_desc->add_text(" = ");
 					class_desc->pop();
 					class_desc->push_color(value_color);
-					_add_text(enum_list[i].value);
+					_add_text(_fix_constant(enum_list[i].value));
 					class_desc->pop();
 					class_desc->pop();
 					if (enum_list[i].description != "") {
@@ -839,7 +874,7 @@ void EditorHelp::_update_doc() {
 				class_desc->add_text(" = ");
 				class_desc->pop();
 				class_desc->push_color(value_color);
-				_add_text(constants[i].value);
+				_add_text(_fix_constant(constants[i].value));
 				class_desc->pop();
 
 				class_desc->pop();
@@ -873,6 +908,7 @@ void EditorHelp::_update_doc() {
 		class_desc->pop();
 		class_desc->pop();
 
+		class_desc->add_newline();
 		class_desc->add_newline();
 		class_desc->push_color(text_color);
 		class_desc->push_font(doc_font);
@@ -958,6 +994,21 @@ void EditorHelp::_update_doc() {
 			class_desc->push_color(headline_color);
 			_add_text(cd.properties[i].name);
 			class_desc->pop(); // color
+
+			if (cd.properties[i].default_value != "") {
+				class_desc->push_color(symbol_color);
+				class_desc->add_text(" [default: ");
+				class_desc->pop(); // color
+
+				class_desc->push_color(value_color);
+				_add_text(_fix_constant(cd.properties[i].default_value));
+				class_desc->pop(); // color
+
+				class_desc->push_color(symbol_color);
+				class_desc->add_text("]");
+				class_desc->pop(); // color
+			}
+
 			class_desc->pop(); // font
 			class_desc->pop(); // cell
 
@@ -997,6 +1048,7 @@ void EditorHelp::_update_doc() {
 
 			class_desc->pop(); // table
 
+			class_desc->add_newline();
 			class_desc->add_newline();
 
 			class_desc->push_color(text_color);
@@ -1040,6 +1092,8 @@ void EditorHelp::_update_doc() {
 			class_desc->pop();
 
 			class_desc->add_newline();
+			class_desc->add_newline();
+
 			class_desc->push_color(text_color);
 			class_desc->push_font(doc_font);
 			class_desc->push_indent(1);
@@ -1131,6 +1185,7 @@ static void _add_text_to_rt(const String &p_bbcode, RichTextLabel *p_rt) {
 	String base_path;
 
 	Ref<Font> doc_font = p_rt->get_font("doc", "EditorFonts");
+	Ref<Font> doc_bold_font = p_rt->get_font("doc_bold", "EditorFonts");
 	Ref<Font> doc_code_font = p_rt->get_font("doc_source", "EditorFonts");
 	Color font_color_hl = p_rt->get_color("headline_color", "EditorHelp");
 	Color link_color = p_rt->get_color("accent_color", "Editor").linear_interpolate(font_color_hl, 0.8);
@@ -1218,7 +1273,7 @@ static void _add_text_to_rt(const String &p_bbcode, RichTextLabel *p_rt) {
 		} else if (tag == "b") {
 
 			//use bold font
-			p_rt->push_font(doc_code_font);
+			p_rt->push_font(doc_bold_font);
 			pos = brk_end + 1;
 			tag_stack.push_front(tag);
 		} else if (tag == "i") {
@@ -1236,13 +1291,13 @@ static void _add_text_to_rt(const String &p_bbcode, RichTextLabel *p_rt) {
 			tag_stack.push_front(tag);
 		} else if (tag == "center") {
 
-			//use monospace font
+			//align to center
 			p_rt->push_align(RichTextLabel::ALIGN_CENTER);
 			pos = brk_end + 1;
 			tag_stack.push_front(tag);
 		} else if (tag == "br") {
 
-			//use monospace font
+			//force a line break
 			p_rt->add_newline();
 			pos = brk_end + 1;
 		} else if (tag == "u") {
@@ -1253,14 +1308,13 @@ static void _add_text_to_rt(const String &p_bbcode, RichTextLabel *p_rt) {
 			tag_stack.push_front(tag);
 		} else if (tag == "s") {
 
-			//use strikethrough (not supported underline instead)
-			p_rt->push_underline();
+			//use strikethrough
+			p_rt->push_strikethrough();
 			pos = brk_end + 1;
 			tag_stack.push_front(tag);
 
 		} else if (tag == "url") {
 
-			//use strikethrough (not supported underline instead)
 			int end = bbcode.find("[", brk_end);
 			if (end == -1)
 				end = bbcode.length();
@@ -1277,13 +1331,12 @@ static void _add_text_to_rt(const String &p_bbcode, RichTextLabel *p_rt) {
 			tag_stack.push_front("url");
 		} else if (tag == "img") {
 
-			//use strikethrough (not supported underline instead)
 			int end = bbcode.find("[", brk_end);
 			if (end == -1)
 				end = bbcode.length();
 			String image = bbcode.substr(brk_end + 1, end - brk_end - 1);
 
-			Ref<Texture> texture = ResourceLoader::load(base_path + "/" + image, "Texture");
+			Ref<Texture> texture = ResourceLoader::load(base_path.plus_file(image), "Texture");
 			if (texture.is_valid())
 				p_rt->add_image(texture);
 
@@ -1297,39 +1350,39 @@ static void _add_text_to_rt(const String &p_bbcode, RichTextLabel *p_rt) {
 			if (col.begins_with("#"))
 				color = Color::html(col);
 			else if (col == "aqua")
-				color = Color::html("#00FFFF");
+				color = Color(0, 1, 1);
 			else if (col == "black")
-				color = Color::html("#000000");
+				color = Color(0, 0, 0);
 			else if (col == "blue")
-				color = Color::html("#0000FF");
+				color = Color(0, 0, 1);
 			else if (col == "fuchsia")
-				color = Color::html("#FF00FF");
+				color = Color(1, 0, 1);
 			else if (col == "gray" || col == "grey")
-				color = Color::html("#808080");
+				color = Color(0.5, 0.5, 0.5);
 			else if (col == "green")
-				color = Color::html("#008000");
+				color = Color(0, 0.5, 0);
 			else if (col == "lime")
-				color = Color::html("#00FF00");
+				color = Color(0, 1, 0);
 			else if (col == "maroon")
-				color = Color::html("#800000");
+				color = Color(0.5, 0, 0);
 			else if (col == "navy")
-				color = Color::html("#000080");
+				color = Color(0, 0, 0.5);
 			else if (col == "olive")
-				color = Color::html("#808000");
+				color = Color(0.5, 0.5, 0);
 			else if (col == "purple")
-				color = Color::html("#800080");
+				color = Color(0.5, 0, 0.5);
 			else if (col == "red")
-				color = Color::html("#FF0000");
+				color = Color(1, 0, 0);
 			else if (col == "silver")
-				color = Color::html("#C0C0C0");
+				color = Color(0.75, 0.75, 0.75);
 			else if (col == "teal")
-				color = Color::html("#008008");
+				color = Color(0, 0.5, 0.5);
 			else if (col == "white")
-				color = Color::html("#FFFFFF");
+				color = Color(1, 1, 1);
 			else if (col == "yellow")
-				color = Color::html("#FFFF00");
+				color = Color(1, 1, 0);
 			else
-				color = Color(0, 0, 0, 1); //base_color;
+				color = Color(0, 0, 0); //base_color;
 
 			p_rt->push_color(color);
 			pos = brk_end + 1;
@@ -1339,7 +1392,7 @@ static void _add_text_to_rt(const String &p_bbcode, RichTextLabel *p_rt) {
 
 			String fnt = tag.substr(5, tag.length());
 
-			Ref<Font> font = ResourceLoader::load(base_path + "/" + fnt, "Font");
+			Ref<Font> font = ResourceLoader::load(base_path.plus_file(fnt), "Font");
 			if (font.is_valid())
 				p_rt->push_font(font);
 			else {

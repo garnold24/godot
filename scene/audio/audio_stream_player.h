@@ -36,7 +36,7 @@
 
 class AudioStreamPlayer : public Node {
 
-	GDCLASS(AudioStreamPlayer, Node)
+	GDCLASS(AudioStreamPlayer, Node);
 
 public:
 	enum MixTarget {
@@ -111,7 +111,6 @@ public:
 	bool get_stream_paused() const;
 
 	Ref<AudioStreamPlayback> get_stream_playback();
-
 
 	AudioStreamPlayer();
 	~AudioStreamPlayer();

@@ -61,7 +61,7 @@ String ARVRCamera::get_configuration_warning() const {
 	// must be child node of ARVROrigin!
 	ARVROrigin *origin = Object::cast_to<ARVROrigin>(get_parent());
 	if (origin == NULL) {
-		return TTR("ARVRCamera must have an ARVROrigin node as its parent");
+		return TTR("ARVRCamera must have an ARVROrigin node as its parent.");
 	};
 
 	return String();
@@ -127,7 +127,7 @@ Point2 ARVRCamera::unproject_position(const Vector3 &p_pos) const {
 	return res;
 };
 
-Vector3 ARVRCamera::project_position(const Point2 &p_point) const {
+Vector3 ARVRCamera::project_position(const Point2 &p_point, float p_z_depth) const {
 	// get our ARVRServer
 	ARVRServer *arvr_server = ARVRServer::get_singleton();
 	ERR_FAIL_NULL_V(arvr_server, Vector3());
@@ -135,7 +135,7 @@ Vector3 ARVRCamera::project_position(const Point2 &p_point) const {
 	Ref<ARVRInterface> arvr_interface = arvr_server->get_primary_interface();
 	if (arvr_interface.is_null()) {
 		// we might be in the editor or have VR turned off, just call superclass
-		return Camera::project_position(p_point);
+		return Camera::project_position(p_point, p_z_depth);
 	}
 
 	if (!is_inside_tree()) {
@@ -155,7 +155,7 @@ Vector3 ARVRCamera::project_position(const Point2 &p_point) const {
 	point.y = (1.0 - (p_point.y / viewport_size.y)) * 2.0 - 1.0;
 	point *= vp_size;
 
-	Vector3 p(point.x, point.y, -get_znear());
+	Vector3 p(point.x, point.y, -p_z_depth);
 
 	return get_camera_transform().xform(p);
 };
@@ -264,6 +264,7 @@ void ARVRController::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rumble"), &ARVRController::get_rumble);
 	ClassDB::bind_method(D_METHOD("set_rumble", "rumble"), &ARVRController::set_rumble);
 	ADD_PROPERTY(PropertyInfo(Variant::REAL, "rumble", PROPERTY_HINT_RANGE, "0.0,1.0,0.01"), "set_rumble", "get_rumble");
+	ADD_PROPERTY_DEFAULT("rumble", 0.0);
 
 	ClassDB::bind_method(D_METHOD("get_mesh"), &ARVRController::get_mesh);
 
@@ -390,7 +391,7 @@ String ARVRController::get_configuration_warning() const {
 };
 
 ARVRController::ARVRController() {
-	controller_id = 0;
+	controller_id = 1;
 	is_active = true;
 	button_states = 0;
 };
@@ -530,7 +531,7 @@ Ref<Mesh> ARVRAnchor::get_mesh() const {
 }
 
 ARVRAnchor::ARVRAnchor() {
-	anchor_id = 0;
+	anchor_id = 1;
 	is_active = true;
 };
 

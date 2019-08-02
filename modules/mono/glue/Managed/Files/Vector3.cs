@@ -190,6 +190,14 @@ namespace Godot
             );
         }
 
+        public Vector3 MoveToward(Vector3 to, real_t delta)
+        {
+            var v = this;
+            var vd = to - v;
+            var len = vd.Length();
+            return len <= delta || len < Mathf.Epsilon ? to : v + vd / len * delta;
+        }
+
         public Axis MaxAxis()
         {
             return x < y ? (y < z ? Axis.Z : Axis.Y) : (x < z ? Axis.Z : Axis.X);
@@ -240,12 +248,14 @@ namespace Godot
             return new Basis(axis, phi).Xform(this);
         }
 
+        [Obsolete("Set is deprecated. Use the Vector3(" + nameof(real_t) + ", " + nameof(real_t) + ", " + nameof(real_t) + ") constructor instead.", error: true)]
         public void Set(real_t x, real_t y, real_t z)
         {
             this.x = x;
             this.y = y;
             this.z = z;
         }
+        [Obsolete("Set is deprecated. Use the Vector3(" + nameof(Vector3) + ") constructor instead.", error: true)]
         public void Set(Vector3 v)
         {
             x = v.x;

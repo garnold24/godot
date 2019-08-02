@@ -33,6 +33,7 @@
 
 #include "core/list.h"
 #include "core/map.h"
+#include "core/script_language.h"
 #include "core/string_name.h"
 #include "core/typedefs.h"
 #include "core/ustring.h"
@@ -80,6 +81,7 @@ public:
 		TK_TYPE_SAMPLERCUBE,
 		TK_INTERPOLATION_FLAT,
 		TK_INTERPOLATION_SMOOTH,
+		TK_CONST,
 		TK_PRECISION_LOW,
 		TK_PRECISION_MID,
 		TK_PRECISION_HIGH,
@@ -286,7 +288,9 @@ public:
 			TYPE_CONSTANT,
 			TYPE_OPERATOR,
 			TYPE_CONTROL_FLOW,
-			TYPE_MEMBER
+			TYPE_MEMBER,
+			TYPE_ARRAY,
+			TYPE_ARRAY_DECLARATION,
 		};
 
 		Type type;
@@ -350,6 +354,40 @@ public:
 				datatype(TYPE_VOID) {}
 	};
 
+	struct ArrayNode : public Node {
+		DataType datatype_cache;
+		StringName name;
+		Node *index_expression;
+		Node *call_expression;
+
+		virtual DataType get_datatype() const { return datatype_cache; }
+
+		ArrayNode() :
+				Node(TYPE_ARRAY),
+				datatype_cache(TYPE_VOID),
+				index_expression(NULL),
+				call_expression(NULL) {}
+	};
+
+	struct ArrayDeclarationNode : public Node {
+		DataPrecision precision;
+		DataType datatype;
+
+		struct Declaration {
+			StringName name;
+			uint32_t size;
+			Vector<Node *> initializer;
+		};
+
+		Vector<Declaration> declarations;
+		virtual DataType get_datatype() const { return datatype; }
+
+		ArrayDeclarationNode() :
+				Node(TYPE_ARRAY_DECLARATION),
+				precision(PRECISION_DEFAULT),
+				datatype(TYPE_VOID) {}
+	};
+
 	struct ConstantNode : public Node {
 		DataType datatype;
 
@@ -378,6 +416,7 @@ public:
 			DataType type;
 			DataPrecision precision;
 			int line; //for completion
+			int array_size;
 		};
 
 		Map<StringName, Variable> variables;
@@ -440,6 +479,13 @@ public:
 	};
 
 	struct ShaderNode : public Node {
+
+		struct Constant {
+			DataType type;
+			DataPrecision precision;
+			ConstantNode *initializer;
+		};
+
 		struct Function {
 			StringName name;
 			FunctionNode *function;
@@ -492,6 +538,7 @@ public:
 			}
 		};
 
+		Map<StringName, Constant> constants;
 		Map<StringName, Varying> varyings;
 		Map<StringName, Uniform> uniforms;
 		Vector<StringName> render_modes;
@@ -542,6 +589,7 @@ public:
 	static DataInterpolation get_token_interpolation(TokenType p_type);
 	static bool is_token_precision(TokenType p_type);
 	static DataPrecision get_token_precision(TokenType p_type);
+	static String get_precision_name(DataPrecision p_type);
 	static String get_datatype_name(DataType p_type);
 	static bool is_token_nonvoid_datatype(TokenType p_type);
 	static bool is_token_operator(TokenType p_type);
@@ -632,18 +680,25 @@ private:
 		IDENTIFIER_FUNCTION_ARGUMENT,
 		IDENTIFIER_LOCAL_VAR,
 		IDENTIFIER_BUILTIN_VAR,
+		IDENTIFIER_CONSTANT,
 	};
 
-	bool _find_identifier(const BlockNode *p_block, const Map<StringName, BuiltInInfo> &p_builtin_types, const StringName &p_identifier, DataType *r_data_type = NULL, IdentifierType *r_type = NULL);
+	bool _find_identifier(const BlockNode *p_block, const Map<StringName, BuiltInInfo> &p_builtin_types, const StringName &p_identifier, DataType *r_data_type = NULL, IdentifierType *r_type = NULL, int *r_array_size = NULL);
 	bool _is_operator_assign(Operator p_op) const;
 	bool _validate_assign(Node *p_node, const Map<StringName, BuiltInInfo> &p_builtin_types, String *r_message = NULL);
 	bool _validate_operator(OperatorNode *p_op, DataType *r_ret_type = NULL);
+
+	enum SubClassTag {
+		TAG_GLOBAL,
+		TAG_ARRAY
+	};
 
 	struct BuiltinFuncDef {
 		enum { MAX_ARGS = 5 };
 		const char *name;
 		DataType rettype;
 		const DataType args[MAX_ARGS];
+		SubClassTag tag;
 	};
 
 	struct BuiltinFuncOutArgs { //arguments used as out in built in functions
@@ -655,6 +710,7 @@ private:
 	int completion_line;
 	BlockNode *completion_block;
 	DataType completion_base;
+	SubClassTag completion_class;
 	StringName completion_function;
 	int completion_argument;
 
@@ -679,7 +735,7 @@ public:
 
 	static String get_shader_type(const String &p_code);
 	Error compile(const String &p_code, const Map<StringName, FunctionInfo> &p_functions, const Vector<StringName> &p_render_modes, const Set<String> &p_shader_types);
-	Error complete(const String &p_code, const Map<StringName, FunctionInfo> &p_functions, const Vector<StringName> &p_render_modes, const Set<String> &p_shader_types, List<String> *r_options, String &r_call_hint);
+	Error complete(const String &p_code, const Map<StringName, FunctionInfo> &p_functions, const Vector<StringName> &p_render_modes, const Set<String> &p_shader_types, List<ScriptCodeCompletionOption> *r_options, String &r_call_hint);
 
 	String get_error_text();
 	int get_error_line();
